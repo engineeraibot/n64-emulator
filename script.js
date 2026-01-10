@@ -75,6 +75,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
     animate();
 
+    // --- Emulator Core ---
+    const ram = new Memory();
+    const cpu = new CPU(ram);
+
+    // Create a small test program
+    // ADDIU R1, R0, 1
+    // ADDIU R2, R1, 1
+    // ADDIU R3, R2, 1
+    ram.write32(0x00000000, 0x24010001);
+    ram.write32(0x00000004, 0x24220001);
+    ram.write32(0x00000008, 0x24430001);
+
+    // Start the CPU
+    cpu.run();
+
+
     const buttons = document.querySelectorAll('.btn');
     const joystick = document.querySelector('.joystick');
 
