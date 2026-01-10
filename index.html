@@ -5,8 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>N64 Emulator</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
+    <div id="rom-loader">
+        <label for="rom-file">Load N64 ROM:</label>
+        <input type="file" id="rom-file" accept=".z64,.n64,.v64">
+    </div>
     <div class="emulator">
         <canvas id="screen"></canvas>
         <div class="controls">
@@ -38,6 +43,10 @@
             </div>
         </div>
     </div>
+    <script src="cpu.js"></script>
+    <script src="rcp.js"></script>
+    <script src="memory.js"></script>
+    <script src="mmu.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

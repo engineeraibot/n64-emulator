@@ -6,6 +6,13 @@ body, html {
     overflow: hidden;
     background-color: #333;
     font-family: sans-serif;
+    color: white;
+}
+
+#rom-loader {
+    padding: 10px;
+    text-align: center;
+    background-color: #444;
 }
 
 .emulator {
