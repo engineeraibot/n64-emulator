@@ -22,21 +22,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const rcp = new RCP(mmu, framebuffer);
     const cpu = new CPU(mmu, rcp);
 
-    // Create a small test program to change the background color
-    const testProgram = [
-        0x3C010000 | (0x01 << 16), // LUI R1, 0x0100
-        0x34210000 | 0xFF00,     // ORI R1, R1, 0xFF00 (R1 = 0x01FF00)
-        0x03E00008,                // JR RA (not really used here)
-        0x00000000,                // NOP
-    ];
-
-    for (let i = 0; i < testProgram.length; i++) {
-        ram.write32(i * 4, testProgram[i]);
-    }
-
-    // Send the command to the RCP
-    cpu.gpr[1] = 0x01FF0000n; // Set R1 to our command
-
     romFileInput.addEventListener('change', (event) => {
         const file = event.target.files[0];
         if (file) {
@@ -53,9 +38,6 @@ document.addEventListener('DOMContentLoaded', () => {
             reader.readAsArrayBuffer(file);
         }
     });
-
-    // Set the background color to red
-    rcp.executeCommand(0x01FF0000);
 
     // The framebuffer is now managed by the RCP, so we don't need to fill it here.
 

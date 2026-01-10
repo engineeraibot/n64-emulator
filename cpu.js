@@ -22,6 +22,9 @@ class CPU {
         // MIPS architecture specifies that register 0 is always zero
         this.gpr[0] = 0n;
 
+        // Coprocessor 0 (CP0) registers
+        this.cp0Registers = new BigInt64Array(32);
+
         this.isRunning = false;
     }
 
@@ -56,33 +59,38 @@ class CPU {
         console.log(`Fetching instruction from 0x${currentPc.toString(16)}`);
         const instruction = this.mmu.read32(Number(currentPc));
 
-        // Default to the next instruction. Jumps and branches will override this.
-        this.pc += 4n;
+        // Decode the instruction and determine the next PC
+        const nextPc = this.decodeAndExecute(instruction, currentPc);
 
-        // Decode and Execute the instruction
-        this.decodeAndExecute(instruction, currentPc);
+        // Execute the instruction in the delay slot
+        const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
+        this.decodeAndExecute(delaySlotInstruction, currentPc + 4n);
+
+        // Update the PC
+        this.pc = nextPc;
 
         this.logState();
     }
 
     decodeAndExecute(instruction, currentPc) {
         const opcode = (instruction >> 26) & 0x3F;
+        let nextPc = currentPc + 8n;
 
         switch (opcode) {
             case 0b010000: // COP0
                 this.opCOP0(instruction);
                 break;
             case 0b000010: // J
-                this.opJ(instruction, currentPc);
+                nextPc = this.opJ(instruction, currentPc);
                 break;
             case 0b000011: // JAL
-                this.opJAL(instruction, currentPc);
+                nextPc = this.opJAL(instruction, currentPc);
                 break;
             case 0b000100: // BEQ
-                this.opBEQ(instruction, currentPc);
+                nextPc = this.opBEQ(instruction, currentPc);
                 break;
             case 0b000101: // BNE
-                this.opBNE(instruction, currentPc);
+                nextPc = this.opBNE(instruction, currentPc);
                 break;
             case 0b001101: // ORI
                 this.opORI(instruction);
@@ -102,6 +110,7 @@ class CPU {
             default:
                 console.error(`Unknown opcode: 0b${opcode.toString(2)} at PC 0x${currentPc.toString(16)}`);
         }
+        return nextPc;
     }
 
     opADDIU(instruction) {
@@ -129,9 +138,11 @@ class CPU {
 
         if (this.gpr[rs] === this.gpr[rt]) {
             const branchAddress = BigInt.asIntN(18, BigInt(offset << 2));
-            this.pc = (currentPc + 4n) + branchAddress;
-            console.log(`BEQ: Branching to 0x${this.pc.toString(16)}`);
+            const targetPc = (currentPc + 4n) + branchAddress;
+            console.log(`BEQ: Branching to 0x${targetPc.toString(16)}`);
+            return targetPc;
         }
+        return currentPc + 8n;
     }
 
     opBNE(instruction, currentPc) {
@@ -141,9 +152,11 @@ class CPU {
 
         if (this.gpr[rs] !== this.gpr[rt]) {
             const branchAddress = BigInt.asIntN(18, BigInt(offset << 2));
-            this.pc = (currentPc + 4n) + branchAddress;
-            console.log(`BNE: Branching to 0x${this.pc.toString(16)}`);
+            const targetPc = (currentPc + 4n) + branchAddress;
+            console.log(`BNE: Branching to 0x${targetPc.toString(16)}`);
+            return targetPc;
         }
+        return currentPc + 8n;
     }
 
     opLW(instruction) {
@@ -198,8 +211,9 @@ class CPU {
 
     opJ(instruction, currentPc) {
         const target = instruction & 0x03FFFFFF;
-        this.pc = (currentPc & 0xF0000000n) | BigInt(target << 2);
-        console.log(`J: Jumping to 0x${this.pc.toString(16)}`);
+        const targetPc = (currentPc & 0xF0000000n) | BigInt(target << 2);
+        console.log(`J: Jumping to 0x${targetPc.toString(16)}`);
+        return targetPc;
     }
 
     opJAL(instruction, currentPc) {
@@ -207,13 +221,17 @@ class CPU {
         this.gpr[31] = currentPc + 8n;
 
         const target = instruction & 0x03FFFFFF;
-        this.pc = (currentPc & 0xF0000000n) | BigInt(target << 2);
-        console.log(`JAL: Jumping to 0x${this.pc.toString(16)}, RA = 0x${this.gpr[31].toString(16)}`);
+        const targetPc = (currentPc & 0xF0000000n) | BigInt(target << 2);
+        console.log(`JAL: Jumping to 0x${targetPc.toString(16)}, RA = 0x${this.gpr[31].toString(16)}`);
+        return targetPc;
     }
 
     opCOP0(instruction) {
         const funct = (instruction >> 21) & 0x1F;
         switch (funct) {
+            case 0b00000: // MFC0
+                this.opMFC0(instruction);
+                break;
             case 0b00100: // MTC0
                 this.opMTC0(instruction);
                 break;
@@ -226,9 +244,18 @@ class CPU {
         const rt = (instruction >> 16) & 0x1F;
         const rd = (instruction >> 11) & 0x1F;
 
-        console.log(`MTC0: Moving gpr[${rt}] to cop0r[${rd}]`);
-        // For now, we'll assume any MTC0 is a command for the RCP
-        this.rcp.executeCommand(Number(this.gpr[rt]));
+    console.log(`MTC0: Moving gpr[${rt}] to cop0r[${rd}]`);
+    this.cp0Registers[rd] = this.gpr[rt];
+    }
+
+    opMFC0(instruction) {
+        const rt = (instruction >> 16) & 0x1F;
+        const rd = (instruction >> 11) & 0x1F;
+
+        if (rt !== 0) {
+            this.gpr[rt] = this.cp0Registers[rd];
+        }
+        console.log(`MFC0: Moving cop0r[${rd}] to gpr[${rt}]`);
     }
 
     logState() {
