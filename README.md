@@ -1,1 +1,1 @@
-# 64-emulator
+# n64-emulator
