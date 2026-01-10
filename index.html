@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>N64 Emulator</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="emulator">
+        <canvas id="screen"></canvas>
+        <div class="controls">
+            <div class="left-pad">
+                <div class="d-pad">
+                    <div class="btn" id="d-up"></div>
+                    <div class="btn" id="d-left"></div>
+                    <div class="btn" id="d-right"></div>
+                    <div class="btn" id="d-down"></div>
+                </div>
+                <div class="joystick"></div>
+            </div>
+            <div class="right-pad">
+                <div class="l-r-buttons">
+                    <div class="btn" id="l-btn">L</div>
+                    <div class="btn" id="r-btn">R</div>
+                </div>
+                <div class="c-buttons">
+                    <div class="btn" id="c-up"></div>
+                    <div class="btn" id="c-left"></div>
+                    <div class="btn" id="c-right"></div>
+                    <div class="btn" id="c-down"></div>
+                </div>
+                <div class="abz-buttons">
+                    <div class="btn" id="a-btn">A</div>
+                    <div class="btn" id="b-btn">B</div>
+                    <div class="btn" id="z-btn">Z</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
