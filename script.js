@@ -2,10 +2,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const romFileInput = document.getElementById('rom-file');
     const romLoaderDiv = document.getElementById('rom-loader');
 
+
+    const canvas = document.getElementById('screen');
+    const scene = new THREE.Scene();
+    // Use an orthographic camera to display the 2D framebuffer without perspective
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const renderer = new THREE.WebGLRenderer({ canvas: canvas });
+
+    // N64 framebuffer dimensions
+    const FB_WIDTH = 320;
+    const FB_HEIGHT = 240;
+
+    // Create a buffer to hold the framebuffer data (RGBA)
+    const framebuffer = new Uint8Array(FB_WIDTH * FB_HEIGHT * 4);
+
     // --- Emulator Core ---
     const ram = new Memory();
     const mmu = new MMU(ram);
-    const cpu = new CPU(mmu);
+    const rcp = new RCP(mmu, framebuffer);
+    const cpu = new CPU(mmu, rcp);
+
+    // Create a small test program to change the background color
+    const testProgram = [
+        0x3C010000 | (0x01 << 16), // LUI R1, 0x0100
+        0x34210000 | 0xFF00,     // ORI R1, R1, 0xFF00 (R1 = 0x01FF00)
+        0x03E00008,                // JR RA (not really used here)
+        0x00000000,                // NOP
+    ];
+
+    for (let i = 0; i < testProgram.length; i++) {
+        ram.write32(i * 4, testProgram[i]);
+    }
+
+    // Send the command to the RCP
+    cpu.gpr[1] = 0x01FF0000n; // Set R1 to our command
 
     romFileInput.addEventListener('change', (event) => {
         const file = event.target.files[0];
@@ -24,29 +54,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    const canvas = document.getElementById('screen');
-    const scene = new THREE.Scene();
-    // Use an orthographic camera to display the 2D framebuffer without perspective
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    const renderer = new THREE.WebGLRenderer({ canvas: canvas });
+    // Set the background color to red
+    rcp.executeCommand(0x01FF0000);
 
-    // N64 framebuffer dimensions
-    const FB_WIDTH = 320;
-    const FB_HEIGHT = 240;
-
-    // Create a buffer to hold the framebuffer data (RGBA)
-    const framebuffer = new Uint8Array(FB_WIDTH * FB_HEIGHT * 4);
-
-    // Fill the framebuffer with a test pattern (gradient)
-    for (let j = 0; j < FB_HEIGHT; j++) {
-        for (let i = 0; i < FB_WIDTH; i++) {
-            const index = (j * FB_WIDTH + i) * 4;
-            framebuffer[index] = (i / FB_WIDTH) * 255;     // R
-            framebuffer[index + 1] = (j / FB_HEIGHT) * 255; // G
-            framebuffer[index + 2] = 0;                     // B
-            framebuffer[index + 3] = 255;                   // A (opaque)
-        }
-    }
+    // The framebuffer is now managed by the RCP, so we don't need to fill it here.
 
     // Create a Three.js texture from the framebuffer data
     const framebufferTexture = new THREE.DataTexture(framebuffer, FB_WIDTH, FB_HEIGHT, THREE.RGBAFormat);
@@ -93,8 +104,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function animate() {
         requestAnimationFrame(animate);
-        // In the future, we'll update the framebufferTexture here
-        // For now, it's static
+
+        // Continuously update the texture with the framebuffer data from the RCP
+        framebufferTexture.needsUpdate = true;
+
         renderer.render(scene, camera);
     }
 
