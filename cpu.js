@@ -1,7 +1,7 @@
 class CPU {
-    constructor(memory) {
+    constructor(mmu) {
         console.log("CPU Initialized");
-        this.memory = memory;
+        this.mmu = mmu;
         this.reset();
     }
 
@@ -20,21 +20,39 @@ class CPU {
 
         // MIPS architecture specifies that register 0 is always zero
         this.gpr[0] = 0n;
+
+        this.isRunning = false;
     }
 
     run() {
+        if (this.isRunning) return;
+        this.isRunning = true;
         console.log("CPU is running...");
-        // We'll run a few steps for now to avoid an infinite loop in the browser
-        for (let i = 0; i < 10; i++) {
-            this.step();
-        }
+
+        const runFrame = () => {
+            if (!this.isRunning) return;
+
+            // Execute a batch of instructions. The number is chosen to balance
+            // performance and responsiveness.
+            for (let i = 0; i < 1000; i++) {
+                this.step();
+            }
+
+            requestAnimationFrame(runFrame);
+        };
+
+        requestAnimationFrame(runFrame);
+    }
+
+    stop() {
+        this.isRunning = false;
+        console.log("CPU stopped.");
     }
 
     step() {
         // Fetch the instruction from the address in the Program Counter
-        const address = Number(this.pc - 0xBFC00000n); // Adjust for our memory mapping
-        console.log(`Fetching instruction from 0x${this.pc.toString(16)} (mapped to 0x${address.toString(16)})`);
-        const instruction = this.memory.read32(address);
+        console.log(`Fetching instruction from 0x${this.pc.toString(16)}`);
+        const instruction = this.mmu.read32(Number(this.pc));
 
         // Decode and Execute the instruction
         this.decodeAndExecute(instruction);
@@ -43,6 +61,7 @@ class CPU {
         // Move to the next instruction (MIPS instructions are 4 bytes)
         this.pc += 4n;
 
+        // In a real MIPS processor, the instruction in the delay slot would be
         this.logState();
     }
 
@@ -50,8 +69,20 @@ class CPU {
         const opcode = (instruction >> 26) & 0x3F;
 
         switch (opcode) {
+            case 0b000100: // BEQ
+                this.opBEQ(instruction);
+                break;
+            case 0b000101: // BNE
+                this.opBNE(instruction);
+                break;
             case 0b001001: // ADDIU
                 this.opADDIU(instruction);
+                break;
+            case 0b100011: // LW
+                this.opLW(instruction);
+                break;
+            case 0b101011: // SW
+                this.opSW(instruction);
                 break;
             default:
                 console.error(`Unknown opcode: 0b${opcode.toString(2)}`);
@@ -74,6 +105,64 @@ class CPU {
         }
 
         console.log(`ADDIU: gpr[${rt}] = gpr[${rs}] + ${immediate}`);
+    }
+
+    opBEQ(instruction) {
+        const rs = (instruction >> 21) & 0x1F;
+        const rt = (instruction >> 16) & 0x1F;
+        const offset = instruction & 0xFFFF;
+
+        // The branch is taken if the values in the two registers are equal
+        if (this.gpr[rs] === this.gpr[rt]) {
+            // The offset is a signed 16-bit value, shifted left by 2
+            const branchAddress = BigInt.asIntN(18, BigInt(offset << 2));
+            // The PC is incremented by 4 (to the delay slot) before the branch is taken
+            this.pc = this.pc + 4n + branchAddress - 4n;
+            console.log(`BEQ: Branching to 0x${(this.pc + 4n).toString(16)}`);
+        }
+    }
+
+    opBNE(instruction) {
+        const rs = (instruction >> 21) & 0x1F;
+        const rt = (instruction >> 16) & 0x1F;
+        const offset = instruction & 0xFFFF;
+
+        // The branch is taken if the values in the two registers are not equal
+        if (this.gpr[rs] !== this.gpr[rt]) {
+            // The offset is a signed 16-bit value, shifted left by 2
+            const branchAddress = BigInt.asIntN(18, BigInt(offset << 2));
+            // The PC is incremented by 4 (to the delay slot) before the branch is taken
+            this.pc = this.pc + 4n + branchAddress - 4n;
+            console.log(`BNE: Branching to 0x${(this.pc + 4n).toString(16)}`);
+        }
+    }
+
+    opLW(instruction) {
+        const base = (instruction >> 21) & 0x1F;
+        const rt = (instruction >> 16) & 0x1F;
+        const offset = instruction & 0xFFFF;
+
+        const addr = this.gpr[base] + BigInt.asIntN(16, BigInt(offset));
+        const value = this.mmu.read32(Number(addr));
+
+        if (rt !== 0) {
+            this.gpr[rt] = BigInt.asIntN(32, BigInt(value));
+        }
+
+        console.log(`LW: gpr[${rt}] = memory[0x${addr.toString(16)}]`);
+    }
+
+    opSW(instruction) {
+        const base = (instruction >> 21) & 0x1F;
+        const rt = (instruction >> 16) & 0x1F;
+        const offset = instruction & 0xFFFF;
+
+        const addr = this.gpr[base] + BigInt.asIntN(16, BigInt(offset));
+        const value = Number(this.gpr[rt] & 0xFFFFFFFFn);
+
+        this.mmu.write32(Number(addr), value);
+
+        console.log(`SW: memory[0x${addr.toString(16)}] = gpr[${rt}]`);
     }
 
     logState() {

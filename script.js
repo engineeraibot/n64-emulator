@@ -1,4 +1,29 @@
 document.addEventListener('DOMContentLoaded', () => {
+    const romFileInput = document.getElementById('rom-file');
+    const romLoaderDiv = document.getElementById('rom-loader');
+
+    // --- Emulator Core ---
+    const ram = new Memory();
+    const mmu = new MMU(ram);
+    const cpu = new CPU(mmu);
+
+    romFileInput.addEventListener('change', (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const romBuffer = e.target.result;
+                console.log(`ROM loaded: ${file.name} (${romBuffer.byteLength} bytes)`);
+                ram.loadRom(romBuffer);
+
+                // Hide the ROM loader and start the emulator
+                romLoaderDiv.style.display = 'none';
+                cpu.run();
+            };
+            reader.readAsArrayBuffer(file);
+        }
+    });
+
     const canvas = document.getElementById('screen');
     const scene = new THREE.Scene();
     // Use an orthographic camera to display the 2D framebuffer without perspective
@@ -76,19 +101,6 @@ document.addEventListener('DOMContentLoaded', () => {
     animate();
 
     // --- Emulator Core ---
-    const ram = new Memory();
-    const cpu = new CPU(ram);
-
-    // Create a small test program
-    // ADDIU R1, R0, 1
-    // ADDIU R2, R1, 1
-    // ADDIU R3, R2, 1
-    ram.write32(0x00000000, 0x24010001);
-    ram.write32(0x00000004, 0x24220001);
-    ram.write32(0x00000008, 0x24430001);
-
-    // Start the CPU
-    cpu.run();
 
 
     const buttons = document.querySelectorAll('.btn');

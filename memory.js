@@ -17,4 +17,12 @@ class Memory {
         // The N64 uses big-endian format
         this.ramView.setUint32(address, value, false);
     }
+
+    loadRom(romBuffer) {
+        const romView = new Uint8Array(romBuffer);
+        const ramView = new Uint8Array(this.ram);
+        // Copy the ROM into the beginning of our RAM array
+        ramView.set(romView, 0);
+        console.log("ROM copied to memory.");
+    }
 }
