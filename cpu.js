@@ -69,10 +69,13 @@ class CPU {
     }
 
     step() {
+        this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn; // Count
+
         const currentPc = this.pc;
         const instruction = this.mmu.read32(Number(currentPc));
 
         const nextPc = this.decodeAndExecute(instruction, currentPc);
+        if (nextPc === null) return; // PC already updated (e.g., ERET)
 
         if (this.branchTaken) {
             const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
@@ -98,6 +101,10 @@ class CPU {
             case 0x05: return this.opBNE(instruction, currentPc);
             case 0x06: return this.opBLEZ(instruction, currentPc);
             case 0x07: return this.opBGTZ(instruction, currentPc);
+            case 0x14: return this.opBEQL(instruction, currentPc);
+            case 0x15: return this.opBNEL(instruction, currentPc);
+            case 0x16: return this.opBLEZL(instruction, currentPc);
+            case 0x17: return this.opBGTZL(instruction, currentPc);
             case 0x08:
             case 0x09: this.opADDIU(instruction); break;
             case 0x18: // DADDI
@@ -108,7 +115,7 @@ class CPU {
             case 0x0D: this.opORI(instruction); break;
             case 0x0E: this.opXORI(instruction); break;
             case 0x0F: this.opLUI(instruction); break;
-            case 0x10: this.opCOP0(instruction); break;
+            case 0x10: if (this.opCOP0(instruction)) return null; break;
             case 0x20: this.opLB(instruction); break;
             case 0x21: this.opLH(instruction); break;
             case 0x23: this.opLW(instruction); break;
@@ -118,12 +125,54 @@ class CPU {
             case 0x28: this.opSB(instruction); break;
             case 0x29: this.opSH(instruction); break;
             case 0x2B: this.opSW(instruction); break;
-            case 0x1F: this.opLD(instruction); break;
+            case 0x37: this.opLD(instruction); break;
             case 0x3F: this.opSD(instruction); break;
             default:
                 console.warn(`Unknown opcode: 0x${opcode.toString(16)} at PC 0x${currentPc.toString(16)}`);
         }
         return currentPc + 4n;
+    }
+    opBEQL(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] === this.gpr[rt]) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+            return currentPc + 4n;
+        }
+        return currentPc + 8n;
+    }
+    opBNEL(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] !== this.gpr[rt]) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+            return currentPc + 4n;
+        }
+        return currentPc + 8n;
+    }
+    opBLEZL(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] <= 0n) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+            return currentPc + 4n;
+        }
+        return currentPc + 8n;
+    }
+    opBGTZL(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] > 0n) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+            return currentPc + 4n;
+        }
+        return currentPc + 8n;
     }
 
     opSPECIAL(instruction, currentPc) {
@@ -142,6 +191,37 @@ class CPU {
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
             case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
+            case 0x10: this.gpr[rd] = this.hi; break; // MFHI
+            case 0x11: this.hi = this.gpr[rs]; break; // MTHI
+            case 0x12: this.gpr[rd] = this.lo; break; // MFLO
+            case 0x13: this.lo = this.gpr[rs]; break; // MTLO
+            case 0x14: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (this.gpr[rs] & 0x3Fn)); break; // DSLLV
+            case 0x16: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break; // DSRLV
+            case 0x17: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break; // DSRAV
+            case 0x18: { // MULT
+                const res = BigInt.asIntN(32, this.gpr[rs]) * BigInt.asIntN(32, this.gpr[rt]);
+                this.lo = BigInt.asIntN(32, res);
+                this.hi = BigInt.asIntN(32, res >> 32n);
+                break;
+            }
+            case 0x19: { // MULTU
+                const res = BigInt.asUintN(32, this.gpr[rs]) * BigInt.asUintN(32, this.gpr[rt]);
+                this.lo = BigInt.asIntN(32, res);
+                this.hi = BigInt.asIntN(32, res >> 32n);
+                break;
+            }
+            case 0x1A: { // DIV
+                const a = BigInt.asIntN(32, this.gpr[rs]);
+                const b = BigInt.asIntN(32, this.gpr[rt]);
+                if (b !== 0n) { this.lo = BigInt.asIntN(32, a / b); this.hi = BigInt.asIntN(32, a % b); }
+                break;
+            }
+            case 0x1B: { // DIVU
+                const a = BigInt.asUintN(32, this.gpr[rs]);
+                const b = BigInt.asUintN(32, this.gpr[rt]);
+                if (b !== 0n) { this.lo = BigInt.asIntN(32, a / b); this.hi = BigInt.asIntN(32, a % b); }
+                break;
+            }
             case 0x20:
             case 0x21: this.gpr[rd] = BigInt.asIntN(32, this.gpr[rs] + this.gpr[rt]); break;
             case 0x22:
@@ -156,6 +236,12 @@ class CPU {
             case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break; // DADDU
             case 0x2E:
             case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break; // DSUBU
+            case 0x38: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << BigInt(sa)); break; // DSLL
+            case 0x3A: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRL
+            case 0x3B: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRA
+            case 0x3C: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (BigInt(sa) + 32n)); break; // DSLL32
+            case 0x3E: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRL32
+            case 0x3F: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRA32
             default:
                 console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16)}`);
         }
@@ -353,7 +439,31 @@ class CPU {
         const sub = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const rd = (instruction >>> 11) & 0x1F;
-        if (sub === 0x00) this.gpr[rt] = this.cp0Registers[rd];
-        else if (sub === 0x04) this.cp0Registers[rd] = this.gpr[rt];
+        if (sub === 0x00) { // MFC0
+            this.gpr[rt] = BigInt.asIntN(32, this.cp0Registers[rd]);
+        } else if (sub === 0x04) { // MTC0
+            this.cp0Registers[rd] = this.gpr[rt];
+        } else if (sub === 0x10) { // TLB / ERET
+            const funct = instruction & 0x3F;
+            if (funct === 0x18) { // ERET
+                this.pc = this.cp0Registers[14]; // EPC
+                this.cp0Registers[12] &= ~2n; // Clear EXL bit
+                return true; // PC already updated
+            }
+        }
+        return false;
+    }
+
+    raiseException(code, pc, isDelaySlot) {
+        this.cp0Registers[13] = (BigInt(code) << 2n); // Cause
+        if (isDelaySlot) {
+            this.cp0Registers[13] |= 0x80000000n; // BD bit
+            this.cp0Registers[14] = pc - 4n; // EPC
+        } else {
+            this.cp0Registers[14] = pc; // EPC
+        }
+        this.cp0Registers[12] |= 2n; // Set EXL bit
+        this.pc = 0x80000180n; // General exception vector
+        console.warn(`Exception ${code} at PC 0x${pc.toString(16)}`);
     }
 }
