@@ -8,16 +8,18 @@ class CPU {
 
     reset() {
         console.log("CPU Reset");
+        this.instructionCount = 0;
         this.gpr = new BigInt64Array(32);
         this.fprBuffer = new ArrayBuffer(32 * 8);
         this.fprView = new DataView(this.fprBuffer);
         this.fcr0 = 0x00000510; // FPU implementation/revision
         this.fcr31 = 0;        // FPU control/status
         this.pc = 0xBFC00000n;
+        this.cp0Registers = new BigInt64Array(32);
+        this.cp0Registers[16] = 0x0006E463n; // Config: standard N64 config
         this.hi = 0n;
         this.lo = 0n;
         this.gpr[0] = 0n;
-        this.cp0Registers = new BigInt64Array(32);
         this.isRunning = false;
         this.branchTaken = false;
         this.branchTarget = 0n;
@@ -35,7 +37,7 @@ class CPU {
 
         const runFrame = () => {
             if (!this.isRunning) return;
-            for (let i = 0; i < 10000; i++) {
+            for (let i = 0; i < 100000; i++) {
                 this.step();
             }
             requestAnimationFrame(runFrame);
@@ -53,9 +55,10 @@ class CPU {
 
         const entryPoint = memory.readRom32(0x08);
         console.log(`HLE Boot: Entry Point from header = 0x${entryPoint.toString(16)}`);
-        // We jump to 0x80000400 (IPL3) instead of the header entry point to let the game initialize itself.
         this.pc = 0x80000400n;
 
+        this.gpr[16] = 0xA4000000n; // s0: ROM header address
+        this.gpr[20] = 0x00000001n; // s4: cart type?
         this.gpr[29] = 0x80370000n; // SP
         this.gpr[31] = 0x80000000n; // RA
 
@@ -74,6 +77,8 @@ class CPU {
     }
 
     step() {
+        this.instructionCount++;
+
         this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn; // Count
         if (this.cp0Registers[9] === this.cp0Registers[11]) {
             this.cp0Registers[13] |= 0x00008000n; // IP7 (Timer)
@@ -97,16 +102,17 @@ class CPU {
         const currentPc = this.pc;
         const instruction = this.mmu.read32(Number(currentPc));
 
+
         const nextPc = this.decodeAndExecute(instruction, currentPc);
         if (nextPc === null) return; // PC already updated (e.g., ERET)
 
         if (this.branchTaken) {
             const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
             this.decodeAndExecute(delaySlotInstruction, currentPc + 4n);
-            this.pc = this.branchTarget;
+            this.pc = BigInt.asIntN(32, this.branchTarget);
             this.branchTaken = false;
         } else {
-            this.pc = nextPc;
+            this.pc = BigInt.asIntN(32, nextPc);
         }
 
         this.gpr[0] = 0n;
@@ -128,6 +134,8 @@ class CPU {
             case 0x15: return this.opBNEL(instruction, currentPc);
             case 0x16: return this.opBLEZL(instruction, currentPc);
             case 0x17: return this.opBGTZL(instruction, currentPc);
+            case 0x12: break; // COP2
+            case 0x1C: break; // SPECIAL2?
             case 0x08:
             case 0x09: this.opADDIU(instruction); break;
             case 0x18: // DADDI
@@ -158,9 +166,15 @@ class CPU {
             case 0x2D: this.opSWR(instruction); break;
             case 0x2E: this.opSDR(instruction); break;
             case 0x2F: break; // CACHE
+            case 0x30: this.opLL(instruction); break;
             case 0x31: this.opLWC1(instruction); break;
+            case 0x33: break; // PREF
+            case 0x34: this.opLLD(instruction); break;
             case 0x35: this.opLDC1(instruction); break;
+            case 0x38: this.opSC(instruction); break;
             case 0x39: this.opSWC1(instruction); break;
+            case 0x3B: break; // CACHE
+            case 0x3C: this.opSCD(instruction); break;
             case 0x3D: this.opSDC1(instruction); break;
             case 0x37: this.opLD(instruction); break;
             case 0x3F: this.opSD(instruction); break;
@@ -221,9 +235,15 @@ class CPU {
 
         switch (funct) {
             case 0x00: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << BigInt(sa)); break;
+            case 0x01: // MOVCI
+                const tf = (instruction >>> 16) & 1;
+                const cond = (this.fcr31 & 0x00800000) !== 0;
+                if (tf === (cond ? 1 : 0)) this.gpr[rd] = this.gpr[rs];
+                break;
             case 0x02: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asUintN(32, this.gpr[rt]) >> BigInt(sa))); break;
             case 0x03: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> BigInt(sa))); break;
             case 0x04: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << (this.gpr[rs] & 0x1Fn)); break;
+            case 0x05: break; // Unknown used by SM64
             case 0x06: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asUintN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVZ
@@ -237,6 +257,7 @@ class CPU {
             case 0x12: this.gpr[rd] = this.lo; break; // MFLO
             case 0x13: this.lo = this.gpr[rs]; break; // MTLO
             case 0x14: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (this.gpr[rs] & 0x3Fn)); break; // DSLLV
+            case 0x15: break; // Unknown used by SM64
             case 0x16: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break; // DSRLV
             case 0x17: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break; // DSRAV
             case 0x18: { // MULT
@@ -308,10 +329,13 @@ class CPU {
             case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break; // DADDU
             case 0x2E:
             case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break; // DSUBU
+            case 0x31: break; // Unknown used by SM64
             case 0x38: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << BigInt(sa)); break; // DSLL
+            case 0x39: break; // Unknown used by SM64
             case 0x3A: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRL
             case 0x3B: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRA
             case 0x3C: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (BigInt(sa) + 32n)); break; // DSLL32
+            case 0x3D: break; // Unknown used by SM64
             case 0x3E: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRL32
             case 0x3F: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRA32
             default:
@@ -659,6 +683,22 @@ class CPU {
         const addr = this.gpr[base] + offset;
         this.mmu.write64(Number(addr), this.gpr[rt]);
     }
+    opLL(instruction) {
+        this.opLW(instruction); // Atomic not really needed on single-core
+    }
+    opLLD(instruction) {
+        this.opLD(instruction);
+    }
+    opSC(instruction) {
+        const rt = (instruction >>> 16) & 0x1F;
+        this.opSW(instruction);
+        this.gpr[rt] = 1n; // Always succeed
+    }
+    opSCD(instruction) {
+        const rt = (instruction >>> 16) & 0x1F;
+        this.opSD(instruction);
+        this.gpr[rt] = 1n; // Always succeed
+    }
     opLWC1(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const ft = (instruction >>> 16) & 0x1F;
@@ -745,13 +785,24 @@ class CPU {
                 else if (funct === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false); // CVT.L.S
                 else if ((funct & 0x30) === 0x30) { // C.xx.S
                     let cond = false;
+                    const nan = isNaN(v1) || isNaN(v2);
                     switch (funct & 0x0F) {
                         case 0x00: cond = false; break; // F
-                        case 0x01: cond = isNaN(v1) || isNaN(v2); break; // UN
-                        case 0x02: cond = (v1 === v2); break; // EQ
-                        case 0x03: cond = (v1 === v2) || isNaN(v1) || isNaN(v2); break; // UEQ
-                        case 0x0C: cond = (v1 < v2); break; // LT
-                        case 0x0E: cond = (v1 <= v2); break; // LE
+                        case 0x01: cond = nan; break; // UN
+                        case 0x02: cond = !nan && (v1 === v2); break; // EQ
+                        case 0x03: cond = nan || (v1 === v2); break; // UEQ
+                        case 0x04: cond = !nan && (v1 < v2); break; // OLT
+                        case 0x05: cond = nan || (v1 < v2); break; // ULT
+                        case 0x06: cond = !nan && (v1 <= v2); break; // OLE
+                        case 0x07: cond = nan || (v1 <= v2); break; // ULE
+                        case 0x08: cond = false; break; // SF
+                        case 0x09: cond = nan; break; // NGLE
+                        case 0x0A: cond = !nan && (v1 === v2); break; // SEQ
+                        case 0x0B: cond = nan || (v1 === v2); break; // NGL
+                        case 0x0C: cond = !nan && (v1 < v2); break; // LT
+                        case 0x0D: cond = nan || (v1 < v2); break; // NGE
+                        case 0x0E: cond = !nan && (v1 <= v2); break; // LE
+                        case 0x0F: cond = nan || (v1 <= v2); break; // NGT
                     }
                     if (cond) this.fcr31 |= 0x00800000; else this.fcr31 &= ~0x00800000;
                 }

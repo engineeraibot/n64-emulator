@@ -65,11 +65,17 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('resize', resizeRenderer);
     resizeRenderer();
 
+    let lastViOrigin = -1;
     function updateDisplay() {
         mmu.miRegisters[2] |= 0x08; // VI Interrupt
 
         const origin = mmu.viRegisters[1] & 0x00FFFFFF;
         const width = mmu.viRegisters[2] & 0xFFF;
+
+        if (origin !== lastViOrigin && width !== 0) {
+            console.log(`VI Update: Origin=0x${origin.toString(16)} Width=${width}`);
+            lastViOrigin = origin;
+        }
 
         if (width === 0) return;
 
