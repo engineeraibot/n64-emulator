@@ -62,12 +62,13 @@ class CPU {
         this.gpr[29] = 0x80370000n; // SP
         this.gpr[31] = 0x80000000n; // RA
 
-        const bootSize = Math.min(4 * 1024 * 1024, memory.rom.byteLength - 0x1000);
+        const ramAddr = 0x400;
+        const bootSize = Math.min(memory.rdram.byteLength - ramAddr, memory.rom.byteLength - 0x1000);
         const romView = new Uint8Array(memory.rom, 0x1000, bootSize);
-        const rdramView = new Uint8Array(memory.rdram, 0x400, bootSize);
+        const rdramView = new Uint8Array(memory.rdram, ramAddr, bootSize);
         rdramView.set(romView);
 
-        console.log(`HLE Boot: Copied ${bootSize} bytes to RDRAM @ 0x400`);
+        console.log(`HLE Boot: Copied ${bootSize} bytes to RDRAM @ 0x${ramAddr.toString(16)}`);
         this.isHleBootDone = true;
     }
 
@@ -243,12 +244,11 @@ class CPU {
             case 0x02: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asUintN(32, this.gpr[rt]) >> BigInt(sa))); break;
             case 0x03: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> BigInt(sa))); break;
             case 0x04: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << (this.gpr[rs] & 0x1Fn)); break;
-            case 0x05: break; // Unknown used by SM64
             case 0x06: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asUintN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVZ
             case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVN
-            case 0x0D: break; // BREAK
+            case 0x0D: this.raiseException(9, currentPc, false); break; // BREAK
             case 0x0F: break; // SYNC
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
             case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
@@ -257,7 +257,6 @@ class CPU {
             case 0x12: this.gpr[rd] = this.lo; break; // MFLO
             case 0x13: this.lo = this.gpr[rs]; break; // MTLO
             case 0x14: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (this.gpr[rs] & 0x3Fn)); break; // DSLLV
-            case 0x15: break; // Unknown used by SM64
             case 0x16: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break; // DSRLV
             case 0x17: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break; // DSRAV
             case 0x18: { // MULT
@@ -329,13 +328,16 @@ class CPU {
             case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break; // DADDU
             case 0x2E:
             case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break; // DSUBU
-            case 0x31: break; // Unknown used by SM64
+            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TGE
+            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) this.raiseException(13, currentPc, false); break; // TGEU
+            case 0x32: if (this.gpr[rs] < this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TLT
+            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) this.raiseException(13, currentPc, false); break; // TLTU
+            case 0x34: if (this.gpr[rs] === this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TEQ
+            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TNE
             case 0x38: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << BigInt(sa)); break; // DSLL
-            case 0x39: break; // Unknown used by SM64
             case 0x3A: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRL
             case 0x3B: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRA
             case 0x3C: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (BigInt(sa) + 32n)); break; // DSLL32
-            case 0x3D: break; // Unknown used by SM64
             case 0x3E: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRL32
             case 0x3F: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRA32
             default:
@@ -780,6 +782,10 @@ class CPU {
                 else if (funct === 0x05) this.fprView.setFloat32(fd * 8 + 4, Math.abs(v1), false); // ABS.S
                 else if (funct === 0x06) this.fprView.setFloat32(fd * 8 + 4, v1, false); // MOV.S
                 else if (funct === 0x07) this.fprView.setFloat32(fd * 8 + 4, -v1, false); // NEG.S
+                else if (funct === 0x0C) this.fprView.setInt32(fd * 8 + 4, Math.round(v1), false); // ROUND.W.S
+                else if (funct === 0x0D) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // TRUNC.W.S
+                else if (funct === 0x0E) this.fprView.setInt32(fd * 8 + 4, Math.ceil(v1), false);  // CEIL.W.S
+                else if (funct === 0x0F) this.fprView.setInt32(fd * 8 + 4, Math.floor(v1), false); // FLOOR.W.S
                 else if (funct === 0x21) this.fprView.setFloat64(fd * 8, v1, false); // CVT.D.S
                 else if (funct === 0x24) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // CVT.W.S
                 else if (funct === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false); // CVT.L.S
@@ -813,6 +819,10 @@ class CPU {
                 else if (funct === 0x01) this.fprView.setFloat64(fd * 8, v1 - v2, false); // SUB.D
                 else if (funct === 0x02) this.fprView.setFloat64(fd * 8, v1 * v2, false); // MUL.D
                 else if (funct === 0x03) this.fprView.setFloat64(fd * 8, v1 / v2, false); // DIV.D
+                else if (funct === 0x0C) this.fprView.setInt32(fd * 8 + 4, Math.round(v1), false); // ROUND.W.D
+                else if (funct === 0x0D) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // TRUNC.W.D
+                else if (funct === 0x0E) this.fprView.setInt32(fd * 8 + 4, Math.ceil(v1), false);  // CEIL.W.D
+                else if (funct === 0x0F) this.fprView.setInt32(fd * 8 + 4, Math.floor(v1), false); // FLOOR.W.D
                 else if (funct === 0x20) this.fprView.setFloat32(fd * 8 + 4, v1, false); // CVT.S.D
                 else if (funct === 0x24) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // CVT.W.D
                 else if (funct === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false); // CVT.L.D
