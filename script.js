@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const framebuffer = new Uint8Array(FB_WIDTH * FB_HEIGHT * 4);
 
-    const ram = new Memory();
+    const ram = new Memory(8 * 1024 * 1024);
     const mmu = new MMU(ram);
     const rcp = new RCP(mmu, framebuffer);
     const cpu = new CPU(mmu, rcp);
@@ -66,6 +66,8 @@ document.addEventListener('DOMContentLoaded', () => {
     resizeRenderer();
 
     function updateDisplay() {
+        mmu.miRegisters[2] |= 0x08; // VI Interrupt
+
         const origin = mmu.viRegisters[1] & 0x00FFFFFF;
         const width = mmu.viRegisters[2] & 0xFFF;
 

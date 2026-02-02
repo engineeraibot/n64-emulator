@@ -9,6 +9,10 @@ class CPU {
     reset() {
         console.log("CPU Reset");
         this.gpr = new BigInt64Array(32);
+        this.fprBuffer = new ArrayBuffer(32 * 8);
+        this.fprView = new DataView(this.fprBuffer);
+        this.fcr0 = 0x00000510; // FPU implementation/revision
+        this.fcr31 = 0;        // FPU control/status
         this.pc = 0xBFC00000n;
         this.hi = 0n;
         this.lo = 0n;
@@ -48,13 +52,14 @@ class CPU {
         }
 
         const entryPoint = memory.readRom32(0x08);
-        console.log(`HLE Boot: Entry Point = 0x${entryPoint.toString(16)}`);
-        this.pc = BigInt(entryPoint) & 0xFFFFFFFFn;
+        console.log(`HLE Boot: Entry Point from header = 0x${entryPoint.toString(16)}`);
+        // We jump to 0x80000400 (IPL3) instead of the header entry point to let the game initialize itself.
+        this.pc = 0x80000400n;
 
         this.gpr[29] = 0x80370000n; // SP
         this.gpr[31] = 0x80000000n; // RA
 
-        const bootSize = Math.min(1024 * 1024, memory.rom.byteLength - 0x1000);
+        const bootSize = Math.min(4 * 1024 * 1024, memory.rom.byteLength - 0x1000);
         const romView = new Uint8Array(memory.rom, 0x1000, bootSize);
         const rdramView = new Uint8Array(memory.rdram, 0x400, bootSize);
         rdramView.set(romView);
@@ -70,6 +75,24 @@ class CPU {
 
     step() {
         this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn; // Count
+        if (this.cp0Registers[9] === this.cp0Registers[11]) {
+            this.cp0Registers[13] |= 0x00008000n; // IP7 (Timer)
+        }
+
+        // Update Cause IP2 from MI_INTR_REG & MI_INTR_MASK_REG
+        if (this.mmu.miRegisters[2] & this.mmu.miRegisters[3]) {
+            this.cp0Registers[13] |= 0x00000400n; // IP2
+        } else {
+            this.cp0Registers[13] &= ~0x00000400n;
+        }
+
+        const status = this.cp0Registers[12];
+        const cause = this.cp0Registers[13];
+        if ((status & 1n) && !(status & 2n)) { // IE=1, EXL=0
+            if ((status >> 8n) & (cause >> 8n) & 0xFFn) {
+                this.raiseException(0, this.pc, false);
+            }
+        }
 
         const currentPc = this.pc;
         const instruction = this.mmu.read32(Number(currentPc));
@@ -116,19 +139,33 @@ class CPU {
             case 0x0E: this.opXORI(instruction); break;
             case 0x0F: this.opLUI(instruction); break;
             case 0x10: if (this.opCOP0(instruction)) return null; break;
+            case 0x11: { const pc = this.opCOP1(instruction, currentPc); if (pc !== undefined) return pc; break; }
+            case 0x1A: this.opLDL(instruction); break;
+            case 0x1B: this.opLDR(instruction); break;
             case 0x20: this.opLB(instruction); break;
             case 0x21: this.opLH(instruction); break;
+            case 0x22: this.opLWL(instruction); break;
             case 0x23: this.opLW(instruction); break;
             case 0x24: this.opLBU(instruction); break;
             case 0x25: this.opLHU(instruction); break;
+            case 0x26: this.opLWR(instruction); break;
             case 0x27: this.opLWU(instruction); break;
             case 0x28: this.opSB(instruction); break;
             case 0x29: this.opSH(instruction); break;
+            case 0x2A: this.opSWL(instruction); break;
             case 0x2B: this.opSW(instruction); break;
+            case 0x2C: this.opSDL(instruction); break;
+            case 0x2D: this.opSWR(instruction); break;
+            case 0x2E: this.opSDR(instruction); break;
+            case 0x2F: break; // CACHE
+            case 0x31: this.opLWC1(instruction); break;
+            case 0x35: this.opLDC1(instruction); break;
+            case 0x39: this.opSWC1(instruction); break;
+            case 0x3D: this.opSDC1(instruction); break;
             case 0x37: this.opLD(instruction); break;
             case 0x3F: this.opSD(instruction); break;
             default:
-                console.warn(`Unknown opcode: 0x${opcode.toString(16)} at PC 0x${currentPc.toString(16)}`);
+                console.warn(`Unknown opcode: 0x${opcode.toString(16).padStart(2, '0')} at PC 0x${(currentPc & 0xFFFFFFFFn).toString(16).padStart(8, '0')}`);
         }
         return currentPc + 4n;
     }
@@ -189,6 +226,10 @@ class CPU {
             case 0x04: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << (this.gpr[rs] & 0x1Fn)); break;
             case 0x06: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asUintN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
+            case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVZ
+            case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVN
+            case 0x0D: break; // BREAK
+            case 0x0F: break; // SYNC
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
             case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
             case 0x10: this.gpr[rd] = this.hi; break; // MFHI
@@ -214,6 +255,37 @@ class CPU {
                 const a = BigInt.asIntN(32, this.gpr[rs]);
                 const b = BigInt.asIntN(32, this.gpr[rt]);
                 if (b !== 0n) { this.lo = BigInt.asIntN(32, a / b); this.hi = BigInt.asIntN(32, a % b); }
+                break;
+            }
+            case 0x1C: { // DMULT
+                const a = this.gpr[rs];
+                const b = this.gpr[rt];
+                const res = a * b;
+                this.lo = BigInt.asIntN(64, res);
+                this.hi = BigInt.asIntN(64, res >> 64n);
+                break;
+            }
+            case 0x1D: { // DMULTU
+                const a = BigInt.asUintN(64, this.gpr[rs]);
+                const b = BigInt.asUintN(64, this.gpr[rt]);
+                const res = a * b;
+                this.lo = BigInt.asIntN(64, res & 0xFFFFFFFFFFFFFFFFn);
+                this.hi = BigInt.asIntN(64, res >> 64n);
+                break;
+            }
+            case 0x1E: { // DDIV
+                const a = this.gpr[rs];
+                const b = this.gpr[rt];
+                if (b !== 0n) { this.lo = a / b; this.hi = a % b; }
+                break;
+            }
+            case 0x1F: { // DDIVU
+                const a = BigInt.asUintN(64, this.gpr[rs]);
+                const b = BigInt.asUintN(64, this.gpr[rt]);
+                if (b !== 0n) {
+                    this.lo = BigInt.asIntN(64, a / b);
+                    this.hi = BigInt.asIntN(64, a % b);
+                }
                 break;
             }
             case 0x1B: { // DIVU
@@ -243,7 +315,7 @@ class CPU {
             case 0x3E: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRL32
             case 0x3F: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRA32
             default:
-                console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16)}`);
+                console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16).padStart(2, '0')} at PC 0x${(currentPc & 0xFFFFFFFFn).toString(16).padStart(8, '0')}`);
         }
         return currentPc + 4n;
     }
@@ -428,12 +500,281 @@ class CPU {
         const addr = this.gpr[base] + offset;
         this.mmu.write32(Number(addr), Number(this.gpr[rt] & 0xFFFFFFFFn));
     }
+    opLWL(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 3n);
+        const word = this.mmu.read32(Number(addr & ~3n));
+        const rt32 = Number(this.gpr[rt] & 0xFFFFFFFFn);
+        let result;
+        switch (byteOffset) {
+            case 0: result = word; break;
+            case 1: result = (rt32 & 0x000000FF) | (word << 8); break;
+            case 2: result = (rt32 & 0x0000FFFF) | (word << 16); break;
+            case 3: result = (rt32 & 0x00FFFFFF) | (word << 24); break;
+        }
+        this.gpr[rt] = BigInt.asIntN(32, BigInt(result | 0));
+    }
+    opLWR(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 3n);
+        const word = this.mmu.read32(Number(addr & ~3n));
+        const rt32 = Number(this.gpr[rt] & 0xFFFFFFFFn);
+        let result;
+        switch (byteOffset) {
+            case 0: result = (rt32 & 0xFFFFFF00) | (word >>> 24); break;
+            case 1: result = (rt32 & 0xFFFF0000) | (word >>> 16); break;
+            case 2: result = (rt32 & 0xFF000000) | (word >>> 8); break;
+            case 3: result = word; break;
+        }
+        this.gpr[rt] = BigInt.asIntN(32, BigInt(result | 0));
+    }
+    opSWL(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 3n);
+        const wordAddr = Number(addr & ~3n);
+        let word = this.mmu.read32(wordAddr);
+        const rt32 = Number(this.gpr[rt] & 0xFFFFFFFFn);
+        switch (byteOffset) {
+            case 0: word = rt32; break;
+            case 1: word = (word & 0xFF000000) | (rt32 >>> 8); break;
+            case 2: word = (word & 0xFFFF0000) | (rt32 >>> 16); break;
+            case 3: word = (word & 0xFFFFFF00) | (rt32 >>> 24); break;
+        }
+        this.mmu.write32(wordAddr, word);
+    }
+    opSWR(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 3n);
+        const wordAddr = Number(addr & ~3n);
+        let word = this.mmu.read32(wordAddr);
+        const rt32 = Number(this.gpr[rt] & 0xFFFFFFFFn);
+        switch (byteOffset) {
+            case 0: word = (word & 0x00FFFFFF) | (rt32 << 24); break;
+            case 1: word = (word & 0x0000FFFF) | (rt32 << 16); break;
+            case 2: word = (word & 0x000000FF) | (rt32 << 8); break;
+            case 3: word = rt32; break;
+        }
+        this.mmu.write32(wordAddr, word);
+    }
+    opLDL(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 7n);
+        const dword = this.mmu.read64(Number(addr & ~7n));
+        const rtVal = this.gpr[rt];
+        let result;
+        switch (byteOffset) {
+            case 0: result = dword; break;
+            case 1: result = (rtVal & 0x00000000000000FFn) | (dword << 8n); break;
+            case 2: result = (rtVal & 0x000000000000FFFFn) | (dword << 16n); break;
+            case 3: result = (rtVal & 0x0000000000FFFFFFn) | (dword << 24n); break;
+            case 4: result = (rtVal & 0x00000000FFFFFFFFn) | (dword << 32n); break;
+            case 5: result = (rtVal & 0x000000FFFFFFFFFFn) | (dword << 40n); break;
+            case 6: result = (rtVal & 0x0000FFFFFFFFFFFFn) | (dword << 48n); break;
+            case 7: result = (rtVal & 0x00FFFFFFFFFFFFFFn) | (dword << 56n); break;
+        }
+        this.gpr[rt] = result;
+    }
+    opLDR(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 7n);
+        const dword = this.mmu.read64(Number(addr & ~7n));
+        const rtVal = this.gpr[rt];
+        let result;
+        switch (byteOffset) {
+            case 0: result = (rtVal & 0xFFFFFFFFFFFFFF00n) | (dword >> 56n); break;
+            case 1: result = (rtVal & 0xFFFFFFFFFFFF0000n) | (dword >> 48n); break;
+            case 2: result = (rtVal & 0xFFFFFFFFFF000000n) | (dword >> 40n); break;
+            case 3: result = (rtVal & 0xFFFFFFFF00000000n) | (dword >> 32n); break;
+            case 4: result = (rtVal & 0xFFFFFF0000000000n) | (dword >> 24n); break;
+            case 5: result = (rtVal & 0xFFFF000000000000n) | (dword >> 16n); break;
+            case 6: result = (rtVal & 0xFF00000000000000n) | (dword >> 8n); break;
+            case 7: result = dword; break;
+        }
+        this.gpr[rt] = result;
+    }
+    opSDL(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 7n);
+        const wordAddr = Number(addr & ~7n);
+        let dword = this.mmu.read64(wordAddr);
+        const rtVal = this.gpr[rt];
+        switch (byteOffset) {
+            case 0: dword = rtVal; break;
+            case 1: dword = (dword & 0xFF00000000000000n) | (rtVal >> 8n); break;
+            case 2: dword = (dword & 0xFFFF000000000000n) | (rtVal >> 16n); break;
+            case 3: dword = (dword & 0xFFFFFF0000000000n) | (rtVal >> 24n); break;
+            case 4: dword = (dword & 0xFFFFFFFF00000000n) | (rtVal >> 32n); break;
+            case 5: dword = (dword & 0xFFFFFFFFFF000000n) | (rtVal >> 40n); break;
+            case 6: dword = (dword & 0xFFFFFFFFFFFF0000n) | (rtVal >> 48n); break;
+            case 7: dword = (dword & 0xFFFFFFFFFFFFFF00n) | (rtVal >> 56n); break;
+        }
+        this.mmu.write64(wordAddr, dword);
+    }
+    opSDR(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        const byteOffset = Number(addr & 7n);
+        const wordAddr = Number(addr & ~7n);
+        let dword = this.mmu.read64(wordAddr);
+        const rtVal = this.gpr[rt];
+        switch (byteOffset) {
+            case 0: dword = (dword & 0x00FFFFFFFFFFFFFFn) | (rtVal << 56n); break;
+            case 1: dword = (dword & 0x0000FFFFFFFFFFFFn) | (rtVal << 48n); break;
+            case 2: dword = (dword & 0x000000FFFFFFFFFFn) | (rtVal << 40n); break;
+            case 3: dword = (dword & 0x00000000FFFFFFFFn) | (rtVal << 32n); break;
+            case 4: dword = (dword & 0x0000000000FFFFFFn) | (rtVal << 24n); break;
+            case 5: dword = (dword & 0x000000000000FFFFn) | (rtVal << 16n); break;
+            case 6: dword = (dword & 0x00000000000000FFn) | (rtVal << 8n); break;
+            case 7: dword = rtVal; break;
+        }
+        this.mmu.write64(wordAddr, dword);
+    }
     opSD(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const addr = this.gpr[base] + offset;
         this.mmu.write64(Number(addr), this.gpr[rt]);
+    }
+    opLWC1(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const ft = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.fprView.setUint32(ft * 8 + 4, this.mmu.read32(Number(addr)), false);
+    }
+    opLDC1(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const ft = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.fprView.setBigUint64(ft * 8, this.mmu.read64(Number(addr)), false);
+    }
+    opSWC1(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const ft = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.mmu.write32(Number(addr), this.fprView.getUint32(ft * 8 + 4, false));
+    }
+    opSDC1(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const ft = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.mmu.write64(Number(addr), this.fprView.getBigUint64(ft * 8, false));
+    }
+    opCOP1(instruction, currentPc) {
+        const sub = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const fs = (instruction >>> 11) & 0x1F;
+        const fd = (instruction >>> 6) & 0x1F;
+        const funct = instruction & 0x3F;
+
+        if (sub === 0x08) { // BC1
+            const cond = (this.fcr31 & 0x00800000) !== 0;
+            const type = (instruction >>> 16) & 0x03;
+            const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+            let taken = false;
+            if (type === 0) taken = !cond;      // BC1F
+            else if (type === 1) taken = cond;  // BC1T
+            else if (type === 2) taken = !cond; // BC1FL
+            else if (type === 3) taken = cond;  // BC1TL
+
+            if (taken) {
+                this.branchTarget = currentPc + 4n + (imm << 2n);
+                this.branchTaken = true;
+                return currentPc + 4n;
+            } else if (type >= 2) {
+                return currentPc + 8n; // Likely: skip delay slot
+            }
+            return currentPc + 4n;
+        }
+
+        if (sub === 0x00) { // MFC1
+            this.gpr[rt] = BigInt.asIntN(32, BigInt(this.fprView.getUint32(fs * 8 + 4, false)));
+        } else if (sub === 0x01) { // DMFC1
+            this.gpr[rt] = this.fprView.getBigInt64(fs * 8, false);
+        } else if (sub === 0x04) { // MTC1
+            this.fprView.setUint32(fs * 8 + 4, Number(this.gpr[rt] & 0xFFFFFFFFn), false);
+        } else if (sub === 0x05) { // DMTC1
+            this.fprView.setBigInt64(fs * 8, this.gpr[rt], false);
+        } else if (sub === 0x02) { // CFC1
+            if (fs === 0) this.gpr[rt] = BigInt(this.fcr0);
+            else if (fs === 31) this.gpr[rt] = BigInt(this.fcr31);
+        } else if (sub === 0x06) { // CTC1
+            if (fs === 31) this.fcr31 = Number(this.gpr[rt] & 0xFFFFFFFFn);
+        } else if (sub >= 0x10) { // FPU Instructions
+            const fmt = sub & 0x07;
+            if (fmt === 0) { // Single precision
+                const v1 = this.fprView.getFloat32(fs * 8 + 4, false);
+                const v2 = this.fprView.getFloat32(rt * 8 + 4, false);
+                if (funct === 0x00) this.fprView.setFloat32(fd * 8 + 4, v1 + v2, false); // ADD.S
+                else if (funct === 0x01) this.fprView.setFloat32(fd * 8 + 4, v1 - v2, false); // SUB.S
+                else if (funct === 0x02) this.fprView.setFloat32(fd * 8 + 4, v1 * v2, false); // MUL.S
+                else if (funct === 0x03) this.fprView.setFloat32(fd * 8 + 4, v1 / v2, false); // DIV.S
+                else if (funct === 0x04) this.fprView.setFloat32(fd * 8 + 4, Math.sqrt(v1), false); // SQRT.S
+                else if (funct === 0x05) this.fprView.setFloat32(fd * 8 + 4, Math.abs(v1), false); // ABS.S
+                else if (funct === 0x06) this.fprView.setFloat32(fd * 8 + 4, v1, false); // MOV.S
+                else if (funct === 0x07) this.fprView.setFloat32(fd * 8 + 4, -v1, false); // NEG.S
+                else if (funct === 0x21) this.fprView.setFloat64(fd * 8, v1, false); // CVT.D.S
+                else if (funct === 0x24) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // CVT.W.S
+                else if (funct === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false); // CVT.L.S
+                else if ((funct & 0x30) === 0x30) { // C.xx.S
+                    let cond = false;
+                    switch (funct & 0x0F) {
+                        case 0x00: cond = false; break; // F
+                        case 0x01: cond = isNaN(v1) || isNaN(v2); break; // UN
+                        case 0x02: cond = (v1 === v2); break; // EQ
+                        case 0x03: cond = (v1 === v2) || isNaN(v1) || isNaN(v2); break; // UEQ
+                        case 0x0C: cond = (v1 < v2); break; // LT
+                        case 0x0E: cond = (v1 <= v2); break; // LE
+                    }
+                    if (cond) this.fcr31 |= 0x00800000; else this.fcr31 &= ~0x00800000;
+                }
+            } else if (fmt === 1) { // Double precision
+                const v1 = this.fprView.getFloat64(fs * 8, false);
+                const v2 = this.fprView.getFloat64(rt * 8, false);
+                if (funct === 0x00) this.fprView.setFloat64(fd * 8, v1 + v2, false); // ADD.D
+                else if (funct === 0x01) this.fprView.setFloat64(fd * 8, v1 - v2, false); // SUB.D
+                else if (funct === 0x02) this.fprView.setFloat64(fd * 8, v1 * v2, false); // MUL.D
+                else if (funct === 0x03) this.fprView.setFloat64(fd * 8, v1 / v2, false); // DIV.D
+                else if (funct === 0x20) this.fprView.setFloat32(fd * 8 + 4, v1, false); // CVT.S.D
+                else if (funct === 0x24) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // CVT.W.D
+                else if (funct === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false); // CVT.L.D
+            } else if (fmt === 4) { // Word
+                const v1 = this.fprView.getInt32(fs * 8 + 4, false);
+                if (funct === 0x20) this.fprView.setFloat32(fd * 8 + 4, v1, false); // CVT.S.W
+                else if (funct === 0x21) this.fprView.setFloat64(fd * 8, v1, false); // CVT.D.W
+            } else if (fmt === 5) { // Long
+                const v1 = this.fprView.getBigInt64(fs * 8, false);
+                if (funct === 0x20) this.fprView.setFloat32(fd * 8 + 4, Number(v1), false); // CVT.S.L
+                else if (funct === 0x21) this.fprView.setFloat64(fd * 8, Number(v1), false); // CVT.D.L
+            }
+        }
     }
     opCOP0(instruction) {
         const sub = (instruction >>> 21) & 0x1F;
