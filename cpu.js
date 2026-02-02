@@ -8,24 +8,16 @@ class CPU {
 
     reset() {
         console.log("CPU Reset");
-        // General Purpose Registers (GPRs) - 32 64-bit registers
         this.gpr = new BigInt64Array(32);
-
-        // Program Counter (PC) - 64-bit
-        // N64 boot address is 0xBFC00000
         this.pc = 0xBFC00000n;
-
-        // Special registers for multiplication and division results
         this.hi = 0n;
         this.lo = 0n;
-
-        // MIPS architecture specifies that register 0 is always zero
         this.gpr[0] = 0n;
-
-        // Coprocessor 0 (CP0) registers
         this.cp0Registers = new BigInt64Array(32);
-
         this.isRunning = false;
+        this.branchTaken = false;
+        this.branchTarget = 0n;
+        this.isHleBootDone = false;
     }
 
     run() {
@@ -33,19 +25,42 @@ class CPU {
         this.isRunning = true;
         console.log("CPU is running...");
 
+        if (!this.isHleBootDone) {
+            this.performHleBoot();
+        }
+
         const runFrame = () => {
             if (!this.isRunning) return;
-
-            // Execute a batch of instructions. The number is chosen to balance
-            // performance and responsiveness.
-            for (let i = 0; i < 1000; i++) {
+            for (let i = 0; i < 10000; i++) {
                 this.step();
             }
-
             requestAnimationFrame(runFrame);
         };
-
         requestAnimationFrame(runFrame);
+    }
+
+    performHleBoot() {
+        console.log("Performing HLE Boot...");
+        const memory = this.mmu.memory;
+        if (!memory.rom) {
+            console.error("HLE Boot: No ROM loaded!");
+            return;
+        }
+
+        const entryPoint = memory.readRom32(0x08);
+        console.log(`HLE Boot: Entry Point = 0x${entryPoint.toString(16)}`);
+        this.pc = BigInt(entryPoint) & 0xFFFFFFFFn;
+
+        this.gpr[29] = 0x80370000n; // SP
+        this.gpr[31] = 0x80000000n; // RA
+
+        const bootSize = Math.min(1024 * 1024, memory.rom.byteLength - 0x1000);
+        const romView = new Uint8Array(memory.rom, 0x1000, bootSize);
+        const rdramView = new Uint8Array(memory.rdram, 0x400, bootSize);
+        rdramView.set(romView);
+
+        console.log(`HLE Boot: Copied ${bootSize} bytes to RDRAM @ 0x400`);
+        this.isHleBootDone = true;
     }
 
     stop() {
@@ -55,219 +70,290 @@ class CPU {
 
     step() {
         const currentPc = this.pc;
-        // Fetch the instruction from the address in the Program Counter
-        console.log(`Fetching instruction from 0x${currentPc.toString(16)}`);
         const instruction = this.mmu.read32(Number(currentPc));
 
-        // Decode the instruction and determine the next PC
         const nextPc = this.decodeAndExecute(instruction, currentPc);
 
-        // Execute the instruction in the delay slot
-        const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
-        this.decodeAndExecute(delaySlotInstruction, currentPc + 4n);
+        if (this.branchTaken) {
+            const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
+            this.decodeAndExecute(delaySlotInstruction, currentPc + 4n);
+            this.pc = this.branchTarget;
+            this.branchTaken = false;
+        } else {
+            this.pc = nextPc;
+        }
 
-        // Update the PC
-        this.pc = nextPc;
-
-        this.logState();
+        this.gpr[0] = 0n;
     }
 
     decodeAndExecute(instruction, currentPc) {
-        const opcode = (instruction >> 26) & 0x3F;
-        let nextPc = currentPc + 8n;
+        const opcode = (instruction >>> 26) & 0x3F;
 
         switch (opcode) {
-            case 0b010000: // COP0
-                this.opCOP0(instruction);
-                break;
-            case 0b000010: // J
-                nextPc = this.opJ(instruction, currentPc);
-                break;
-            case 0b000011: // JAL
-                nextPc = this.opJAL(instruction, currentPc);
-                break;
-            case 0b000100: // BEQ
-                nextPc = this.opBEQ(instruction, currentPc);
-                break;
-            case 0b000101: // BNE
-                nextPc = this.opBNE(instruction, currentPc);
-                break;
-            case 0b001101: // ORI
-                this.opORI(instruction);
-                break;
-            case 0b001111: // LUI
-                this.opLUI(instruction);
-                break;
-            case 0b001001: // ADDIU
-                this.opADDIU(instruction);
-                break;
-            case 0b100011: // LW
-                this.opLW(instruction);
-                break;
-            case 0b101011: // SW
-                this.opSW(instruction);
-                break;
+            case 0x00: return this.opSPECIAL(instruction, currentPc);
+            case 0x01: return this.opREGIMM(instruction, currentPc);
+            case 0x02: return this.opJ(instruction, currentPc);
+            case 0x03: return this.opJAL(instruction, currentPc);
+            case 0x04: return this.opBEQ(instruction, currentPc);
+            case 0x05: return this.opBNE(instruction, currentPc);
+            case 0x06: return this.opBLEZ(instruction, currentPc);
+            case 0x07: return this.opBGTZ(instruction, currentPc);
+            case 0x08:
+            case 0x09: this.opADDIU(instruction); break;
+            case 0x18: // DADDI
+            case 0x19: this.opDADDIU(instruction); break;
+            case 0x0A: this.opSLTI(instruction); break;
+            case 0x0B: this.opSLTIU(instruction); break;
+            case 0x0C: this.opANDI(instruction); break;
+            case 0x0D: this.opORI(instruction); break;
+            case 0x0E: this.opXORI(instruction); break;
+            case 0x0F: this.opLUI(instruction); break;
+            case 0x10: this.opCOP0(instruction); break;
+            case 0x20: this.opLB(instruction); break;
+            case 0x21: this.opLH(instruction); break;
+            case 0x23: this.opLW(instruction); break;
+            case 0x24: this.opLBU(instruction); break;
+            case 0x25: this.opLHU(instruction); break;
+            case 0x27: this.opLWU(instruction); break;
+            case 0x28: this.opSB(instruction); break;
+            case 0x29: this.opSH(instruction); break;
+            case 0x2B: this.opSW(instruction); break;
+            case 0x1F: this.opLD(instruction); break;
+            case 0x3F: this.opSD(instruction); break;
             default:
-                console.error(`Unknown opcode: 0b${opcode.toString(2)} at PC 0x${currentPc.toString(16)}`);
+                console.warn(`Unknown opcode: 0x${opcode.toString(16)} at PC 0x${currentPc.toString(16)}`);
         }
-        return nextPc;
+        return currentPc + 4n;
+    }
+
+    opSPECIAL(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const rd = (instruction >>> 11) & 0x1F;
+        const sa = (instruction >>> 6) & 0x1F;
+        const funct = instruction & 0x3F;
+
+        switch (funct) {
+            case 0x00: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << BigInt(sa)); break;
+            case 0x02: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asUintN(32, this.gpr[rt]) >> BigInt(sa))); break;
+            case 0x03: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> BigInt(sa))); break;
+            case 0x04: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << (this.gpr[rs] & 0x1Fn)); break;
+            case 0x06: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asUintN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
+            case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
+            case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
+            case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
+            case 0x20:
+            case 0x21: this.gpr[rd] = BigInt.asIntN(32, this.gpr[rs] + this.gpr[rt]); break;
+            case 0x22:
+            case 0x23: this.gpr[rd] = BigInt.asIntN(32, this.gpr[rs] - this.gpr[rt]); break;
+            case 0x24: this.gpr[rd] = this.gpr[rs] & this.gpr[rt]; break;
+            case 0x25: this.gpr[rd] = this.gpr[rs] | this.gpr[rt]; break;
+            case 0x26: this.gpr[rd] = this.gpr[rs] ^ this.gpr[rt]; break;
+            case 0x27: this.gpr[rd] = ~(this.gpr[rs] | this.gpr[rt]); break;
+            case 0x2A: this.gpr[rd] = (this.gpr[rs] < this.gpr[rt]) ? 1n : 0n; break;
+            case 0x2B: this.gpr[rd] = (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) ? 1n : 0n; break;
+            case 0x2C:
+            case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break; // DADDU
+            case 0x2E:
+            case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break; // DSUBU
+            default:
+                console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16)}`);
+        }
+        return currentPc + 4n;
     }
 
     opADDIU(instruction) {
-        const rs = (instruction >> 21) & 0x1F;
-        const rt = (instruction >> 16) & 0x1F;
-        const immediate = instruction & 0xFFFF;
-
-        // Sign-extend the 16-bit immediate value to 64 bits
-        const imm64 = BigInt.asIntN(16, BigInt(immediate));
-
-        const result = this.gpr[rs] + imm64;
-
-        // In MIPS, register 0 is always 0.
-        if (rt !== 0) {
-            this.gpr[rt] = result;
-        }
-
-        console.log(`ADDIU: gpr[${rt}] = gpr[${rs}] + ${immediate}`);
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        this.gpr[rt] = BigInt.asIntN(32, this.gpr[rs] + imm);
     }
-
-    opBEQ(instruction, currentPc) {
-        const rs = (instruction >> 21) & 0x1F;
-        const rt = (instruction >> 16) & 0x1F;
-        const offset = instruction & 0xFFFF;
-
-        if (this.gpr[rs] === this.gpr[rt]) {
-            const branchAddress = BigInt.asIntN(18, BigInt(offset << 2));
-            const targetPc = (currentPc + 4n) + branchAddress;
-            console.log(`BEQ: Branching to 0x${targetPc.toString(16)}`);
-            return targetPc;
-        }
-        return currentPc + 8n;
+    opDADDIU(instruction) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        this.gpr[rt] = this.gpr[rs] + imm;
     }
-
-    opBNE(instruction, currentPc) {
-        const rs = (instruction >> 21) & 0x1F;
-        const rt = (instruction >> 16) & 0x1F;
-        const offset = instruction & 0xFFFF;
-
-        if (this.gpr[rs] !== this.gpr[rt]) {
-            const branchAddress = BigInt.asIntN(18, BigInt(offset << 2));
-            const targetPc = (currentPc + 4n) + branchAddress;
-            console.log(`BNE: Branching to 0x${targetPc.toString(16)}`);
-            return targetPc;
-        }
-        return currentPc + 8n;
+    opSLTI(instruction) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        this.gpr[rt] = (this.gpr[rs] < imm) ? 1n : 0n;
     }
-
-    opLW(instruction) {
-        const base = (instruction >> 21) & 0x1F;
-        const rt = (instruction >> 16) & 0x1F;
-        const offset = instruction & 0xFFFF;
-
-        const addr = this.gpr[base] + BigInt.asIntN(16, BigInt(offset));
-        const value = this.mmu.read32(Number(addr));
-
-        if (rt !== 0) {
-            this.gpr[rt] = BigInt.asIntN(32, BigInt(value));
-        }
-
-        console.log(`LW: gpr[${rt}] = memory[0x${addr.toString(16)}]`);
+    opSLTIU(instruction) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        this.gpr[rt] = (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, imm)) ? 1n : 0n;
     }
-
-    opSW(instruction) {
-        const base = (instruction >> 21) & 0x1F;
-        const rt = (instruction >> 16) & 0x1F;
-        const offset = instruction & 0xFFFF;
-
-        const addr = this.gpr[base] + BigInt.asIntN(16, BigInt(offset));
-        const value = Number(this.gpr[rt] & 0xFFFFFFFFn);
-
-        this.mmu.write32(Number(addr), value);
-
-        console.log(`SW: memory[0x${addr.toString(16)}] = gpr[${rt}]`);
+    opANDI(instruction) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt(instruction & 0xFFFF);
+        this.gpr[rt] = this.gpr[rs] & imm;
     }
-
-    opLUI(instruction) {
-        const rt = (instruction >> 16) & 0x1F;
-        const immediate = instruction & 0xFFFF;
-
-        if (rt !== 0) {
-            // LUI places the immediate in the upper 16 bits of the register
-            this.gpr[rt] = BigInt.asIntN(32, BigInt(immediate << 16));
-        }
-        console.log(`LUI: gpr[${rt}] = 0x${(immediate << 16).toString(16)}`);
-    }
-
     opORI(instruction) {
-        const rs = (instruction >> 21) & 0x1F;
-        const rt = (instruction >> 16) & 0x1F;
-        const immediate = instruction & 0xFFFF;
-
-        if (rt !== 0) {
-            this.gpr[rt] = this.gpr[rs] | BigInt(immediate);
-        }
-        console.log(`ORI: gpr[${rt}] = gpr[${rs}] | 0x${immediate.toString(16)}`);
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt(instruction & 0xFFFF);
+        this.gpr[rt] = this.gpr[rs] | imm;
     }
-
+    opXORI(instruction) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt(instruction & 0xFFFF);
+        this.gpr[rt] = this.gpr[rs] ^ imm;
+    }
+    opLUI(instruction) {
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt(instruction & 0xFFFF);
+        this.gpr[rt] = BigInt.asIntN(32, imm << 16n);
+    }
+    opBEQ(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] === this.gpr[rt]) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+        }
+        return currentPc + 4n;
+    }
+    opBNE(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] !== this.gpr[rt]) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+        }
+        return currentPc + 4n;
+    }
+    opBLEZ(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] <= 0n) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+        }
+        return currentPc + 4n;
+    }
+    opBGTZ(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        if (this.gpr[rs] > 0n) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+        }
+        return currentPc + 4n;
+    }
     opJ(instruction, currentPc) {
-        const target = instruction & 0x03FFFFFF;
-        const targetPc = (currentPc & 0xF0000000n) | BigInt(target << 2);
-        console.log(`J: Jumping to 0x${targetPc.toString(16)}`);
-        return targetPc;
+        const target = BigInt(instruction & 0x03FFFFFF);
+        this.branchTarget = (currentPc & 0xF0000000n) | (target << 2n);
+        this.branchTaken = true;
+        return currentPc + 4n;
     }
-
     opJAL(instruction, currentPc) {
-        // Store the return address (the instruction after the delay slot)
         this.gpr[31] = currentPc + 8n;
-
-        const target = instruction & 0x03FFFFFF;
-        const targetPc = (currentPc & 0xF0000000n) | BigInt(target << 2);
-        console.log(`JAL: Jumping to 0x${targetPc.toString(16)}, RA = 0x${this.gpr[31].toString(16)}`);
-        return targetPc;
+        return this.opJ(instruction, currentPc);
     }
-
+    opREGIMM(instruction, currentPc) {
+        const rs = (instruction >>> 21) & 0x1F;
+        const sub = (instruction >>> 16) & 0x1F;
+        const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        let taken = false;
+        switch (sub) {
+            case 0x00: if (this.gpr[rs] < 0n) taken = true; break;
+            case 0x01: if (this.gpr[rs] >= 0n) taken = true; break;
+        }
+        if (taken) {
+            this.branchTarget = currentPc + 4n + (imm << 2n);
+            this.branchTaken = true;
+        }
+        return currentPc + 4n;
+    }
+    opLB(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.gpr[rt] = BigInt.asIntN(8, BigInt(this.mmu.read8(Number(addr))));
+    }
+    opLBU(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.gpr[rt] = BigInt.asUintN(8, BigInt(this.mmu.read8(Number(addr))));
+    }
+    opLH(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.gpr[rt] = BigInt.asIntN(16, BigInt(this.mmu.read16(Number(addr))));
+    }
+    opLHU(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.gpr[rt] = BigInt.asUintN(16, BigInt(this.mmu.read16(Number(addr))));
+    }
+    opLW(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.gpr[rt] = BigInt.asIntN(32, BigInt(this.mmu.read32(Number(addr))));
+    }
+    opLWU(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.gpr[rt] = BigInt.asUintN(32, BigInt(this.mmu.read32(Number(addr))));
+    }
+    opLD(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.gpr[rt] = this.mmu.read64(Number(addr));
+    }
+    opSB(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.mmu.write8(Number(addr), Number(this.gpr[rt] & 0xFFn));
+    }
+    opSH(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.mmu.write16(Number(addr), Number(this.gpr[rt] & 0xFFFFn));
+    }
+    opSW(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.mmu.write32(Number(addr), Number(this.gpr[rt] & 0xFFFFFFFFn));
+    }
+    opSD(instruction) {
+        const base = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
+        const addr = this.gpr[base] + offset;
+        this.mmu.write64(Number(addr), this.gpr[rt]);
+    }
     opCOP0(instruction) {
-        const funct = (instruction >> 21) & 0x1F;
-        switch (funct) {
-            case 0b00000: // MFC0
-                this.opMFC0(instruction);
-                break;
-            case 0b00100: // MTC0
-                this.opMTC0(instruction);
-                break;
-            default:
-                console.error(`Unknown COP0 function: 0b${funct.toString(2)}`);
-        }
-    }
-
-    opMTC0(instruction) {
-        const rt = (instruction >> 16) & 0x1F;
-        const rd = (instruction >> 11) & 0x1F;
-
-    console.log(`MTC0: Moving gpr[${rt}] to cop0r[${rd}]`);
-    this.cp0Registers[rd] = this.gpr[rt];
-    }
-
-    opMFC0(instruction) {
-        const rt = (instruction >> 16) & 0x1F;
-        const rd = (instruction >> 11) & 0x1F;
-
-        if (rt !== 0) {
-            this.gpr[rt] = this.cp0Registers[rd];
-        }
-        console.log(`MFC0: Moving cop0r[${rd}] to gpr[${rt}]`);
-    }
-
-    logState() {
-        console.log(`  PC: 0x${this.pc.toString(16)}`);
-        const nonZeroRegisters = [];
-        for (let i = 1; i < 32; i++) {
-            if (this.gpr[i] !== 0n) {
-                nonZeroRegisters.push(`R${i}: ${this.gpr[i]}`);
-            }
-        }
-        if (nonZeroRegisters.length > 0) {
-            console.log(`  GPRs: ${nonZeroRegisters.join(', ')}`);
-        }
+        const sub = (instruction >>> 21) & 0x1F;
+        const rt = (instruction >>> 16) & 0x1F;
+        const rd = (instruction >>> 11) & 0x1F;
+        if (sub === 0x00) this.gpr[rt] = this.cp0Registers[rd];
+        else if (sub === 0x04) this.cp0Registers[rd] = this.gpr[rt];
     }
 }
