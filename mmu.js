@@ -36,8 +36,11 @@ class MMU {
         this.spRegisters = new Uint32Array(8);
         this.dpcRegisters = new Uint32Array(8);
         this.pifRam = new Uint8Array(64);
+        this.pifRamView = new DataView(this.pifRam.buffer);
         this.spDmem = new Uint8Array(0x1000);
+        this.spDmemView = new DataView(this.spDmem.buffer);
         this.spImem = new Uint8Array(0x1000);
+        this.spImemView = new DataView(this.spImem.buffer);
         this.buttons = 0;
         this.stickX = 0;
         this.stickY = 0;
@@ -53,42 +56,53 @@ class MMU {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read8(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom8(physicalAddress - MMU.ROM_START);
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint8(physicalAddress - MMU.SP_DMEM_START);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint8(physicalAddress - MMU.SP_IMEM_START);
         return 0;
     }
     write8(address, value) {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write8(physicalAddress, value);
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint8(physicalAddress - MMU.SP_DMEM_START, value);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint8(physicalAddress - MMU.SP_IMEM_START, value);
     }
     read16(address) {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read16(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom16(physicalAddress - MMU.ROM_START);
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint16(physicalAddress - MMU.SP_DMEM_START, false);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint16(physicalAddress - MMU.SP_IMEM_START, false);
         return 0;
     }
     write16(address, value) {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write16(physicalAddress, value);
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint16(physicalAddress - MMU.SP_DMEM_START, value, false);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint16(physicalAddress - MMU.SP_IMEM_START, value, false);
     }
     read32(address) {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read32(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom32(physicalAddress - MMU.ROM_START);
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint32(physicalAddress - MMU.SP_DMEM_START, false);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint32(physicalAddress - MMU.SP_IMEM_START, false);
         else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) return this.viRegisters[(physicalAddress - MMU.VI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) return this.piRegisters[(physicalAddress - MMU.PI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) return this.miRegisters[(physicalAddress - MMU.MI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.SI_REGS_START && physicalAddress <= MMU.SI_REGS_END) return this.siRegisters[(physicalAddress - MMU.SI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.SP_REGS_START && physicalAddress <= MMU.SP_REGS_END) return this.spRegisters[(physicalAddress - MMU.SP_REGS_START) >> 2];
         else if (physicalAddress >= MMU.DPC_REGS_START && physicalAddress <= MMU.DPC_REGS_END) return this.dpcRegisters[(physicalAddress - MMU.DPC_REGS_START) >> 2];
-        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
-            const view = new DataView(this.pifRam.buffer);
-            return view.getUint32(physicalAddress - MMU.PIF_RAM_START, false);
-        }
+        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint32(physicalAddress - MMU.PIF_RAM_START, false);
         return 0;
     }
     write32(address, value) {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write32(physicalAddress, value);
-        else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) this.viRegisters[(physicalAddress - MMU.VI_REGS_START) >> 2] = value;
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint32(physicalAddress - MMU.SP_DMEM_START, value, false);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint32(physicalAddress - MMU.SP_IMEM_START, value, false);
+        else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
+            this.viRegisters[(physicalAddress - MMU.VI_REGS_START) >> 2] = value;
+        }
         else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) this.handlePiWrite(physicalAddress, value);
         else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) this.handleMiWrite(physicalAddress, value);
         else if (physicalAddress >= MMU.SI_REGS_START && physicalAddress <= MMU.SI_REGS_END) this.handleSiWrite(physicalAddress, value);
@@ -101,8 +115,7 @@ class MMU {
             else this.dpcRegisters[(physicalAddress - MMU.DPC_REGS_START) >> 2] = value;
         }
         else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
-            const view = new DataView(this.pifRam.buffer);
-            view.setUint32(physicalAddress - MMU.PIF_RAM_START, value, false);
+            this.pifRamView.setUint32(physicalAddress - MMU.PIF_RAM_START, value, false);
             if (physicalAddress === MMU.PIF_RAM_END - 3) this.handlePifCommand();
         }
     }
@@ -202,11 +215,15 @@ class MMU {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read64(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom64(physicalAddress - MMU.ROM_START);
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getBigUint64(physicalAddress - MMU.SP_DMEM_START, false);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getBigUint64(physicalAddress - MMU.SP_IMEM_START, false);
         return 0n;
     }
     write64(address, value) {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write64(physicalAddress, value);
+        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setBigUint64(physicalAddress - MMU.SP_DMEM_START, value, false);
+        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setBigUint64(physicalAddress - MMU.SP_IMEM_START, value, false);
     }
 
     translateAddress(address) {
