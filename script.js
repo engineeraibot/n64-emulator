@@ -72,30 +72,46 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateDisplay() {
         mmu.miRegisters[2] |= 0x08; // VI Interrupt
 
+        const status = mmu.viRegisters[0];
         const origin = mmu.viRegisters[1] & 0x00FFFFFF;
         const width = mmu.viRegisters[2] & 0xFFF;
+        const type = status & 0x03; // 2: 16-bit, 3: 32-bit
 
         if (origin !== lastViOrigin && width !== 0) {
-            console.log(`VI Update: Origin=0x${origin.toString(16)} Width=${width}`);
+            console.log(`VI Update: Origin=0x${origin.toString(16)} Width=${width} Type=${type}`);
             lastViOrigin = origin;
         }
 
-        if (width === 0) return;
+        if (width === 0 || type < 2) return;
 
         const rdramView = new DataView(ram.rdram);
         let fbIdx = 0;
+        const bpp = (type === 3) ? 4 : 2;
+
         for (let y = 0; y < FB_HEIGHT; y++) {
             for (let x = 0; x < FB_WIDTH; x++) {
                 if (x < width) {
-                    const addr = origin + (y * width + x) * 2;
-                    if (addr + 2 <= ram.rdram.byteLength) {
-                        const val = rdramView.getUint16(addr, false);
-                        framebuffer[fbIdx++] = ((val >> 11) & 0x1F) << 3;
-                        framebuffer[fbIdx++] = ((val >> 6) & 0x1F) << 3;
-                        framebuffer[fbIdx++] = ((val >> 1) & 0x1F) << 3;
-                        framebuffer[fbIdx++] = 255;
+                    const addr = origin + (y * width + x) * bpp;
+                    if (addr + bpp <= ram.rdram.byteLength) {
+                        if (type === 2) { // 16-bit RGBA5551
+                            const val = rdramView.getUint16(addr, false);
+                            framebuffer[fbIdx++] = ((val >> 11) & 0x1F) << 3;
+                            framebuffer[fbIdx++] = ((val >> 6) & 0x1F) << 3;
+                            framebuffer[fbIdx++] = ((val >> 1) & 0x1F) << 3;
+                            framebuffer[fbIdx++] = 255;
+                        } else { // 32-bit RGBA8888
+                            framebuffer[fbIdx++] = rdramView.getUint8(addr);
+                            framebuffer[fbIdx++] = rdramView.getUint8(addr + 1);
+                            framebuffer[fbIdx++] = rdramView.getUint8(addr + 2);
+                            framebuffer[fbIdx++] = 255; // Alpha
+                        }
                     } else { fbIdx += 4; }
-                } else { fbIdx += 4; }
+                } else {
+                    framebuffer[fbIdx++] = 0;
+                    framebuffer[fbIdx++] = 0;
+                    framebuffer[fbIdx++] = 0;
+                    framebuffer[fbIdx++] = 255;
+                }
             }
         }
         framebufferTexture.needsUpdate = true;

@@ -25,6 +25,9 @@ class CPU {
         this.branchTarget = 0n;
         this.isHleBootDone = false;
         this.exceptionRaised = false;
+        this.warnedOpcodes = new Set();
+        this.warnedSpecial = new Set();
+        this.warnedExceptions = new Set();
     }
 
     run() {
@@ -38,9 +41,14 @@ class CPU {
 
         const runFrame = () => {
             if (!this.isRunning) return;
-            // High instructions per frame for SM64
-            for (let i = 0; i < 5000000; i++) {
-                this.step();
+            // High instructions per frame for SM64, but not so high it freezes the browser
+            const startTime = performance.now();
+            let count = 0;
+            while (count < 2000000 && (performance.now() - startTime < 16)) {
+                for (let i = 0; i < 2000; i++) {
+                    this.step();
+                }
+                count += 2000;
             }
             requestAnimationFrame(runFrame);
         };
@@ -91,23 +99,37 @@ class CPU {
     step() {
         this.instructionCount++;
 
-        this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn; // Count
-        if (this.cp0Registers[9] === this.cp0Registers[11]) {
-            this.cp0Registers[13] |= 0x00008000n; // IP7 (Timer)
-        }
+        if ((this.instructionCount & 0x7FF) === 0) {
+            const prevCount = this.cp0Registers[9];
+            this.cp0Registers[9] = (prevCount + 2048n) & 0xFFFFFFFFn; // Count
+            const compare = this.cp0Registers[11];
 
-        // Update Cause IP2 from MI_INTR_REG & MI_INTR_MASK_REG
-        if (this.mmu.miRegisters[2] & this.mmu.miRegisters[3]) {
-            this.cp0Registers[13] |= 0x00000400n; // IP2
-        } else {
-            this.cp0Registers[13] &= ~0x00000400n;
-        }
+            let triggered = false;
+            if (prevCount <= compare) {
+                if (this.cp0Registers[9] >= compare || this.cp0Registers[9] < prevCount) triggered = true;
+            } else {
+                if (this.cp0Registers[9] >= compare && this.cp0Registers[9] < prevCount) triggered = true;
+            }
 
-        const status = this.cp0Registers[12];
-        const cause = this.cp0Registers[13];
-        if ((status & 1n) && !(status & 2n)) { // IE=1, EXL=0
-            if ((status >> 8n) & (cause >> 8n) & 0xFFn) {
-                this.raiseException(0, this.pc, false);
+            if (triggered) {
+                this.cp0Registers[13] |= 0x00008000n; // IP7 (Timer)
+            }
+
+            // Update Cause IP2 from MI_INTR_REG & MI_INTR_MASK_REG
+            const miIntr = this.mmu.miRegisters[2];
+            const miMask = this.mmu.miRegisters[3];
+            if (miIntr & miMask) {
+                this.cp0Registers[13] |= 0x00000400n; // IP2
+            } else {
+                this.cp0Registers[13] &= ~0x00000400n;
+            }
+
+            const status = this.cp0Registers[12];
+            const cause = this.cp0Registers[13];
+            if ((status & 1n) && !(status & 2n)) { // IE=1, EXL=0
+                if ((status >> 8n) & (cause >> 8n) & 0xFFn) {
+                    this.raiseException(0, this.pc, false);
+                }
             }
         }
 
@@ -115,12 +137,13 @@ class CPU {
         const instruction = this.mmu.read32(Number(currentPc));
 
         this.exceptionRaised = false;
-        const nextPc = this.decodeAndExecute(instruction, currentPc);
+        const nextPc = this.decodeAndExecute(instruction, currentPc, false);
         if (this.exceptionRaised || nextPc === null) return;
 
         if (this.branchTaken) {
             const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
-            this.decodeAndExecute(delaySlotInstruction, currentPc + 4n);
+            this.decodeAndExecute(delaySlotInstruction, currentPc + 4n, true);
+            if (this.exceptionRaised) return;
 
             this.pc = BigInt.asIntN(32, this.branchTarget);
             this.branchTaken = false;
@@ -131,24 +154,24 @@ class CPU {
         this.gpr[0] = 0n;
     }
 
-    decodeAndExecute(instruction, currentPc) {
+    decodeAndExecute(instruction, currentPc, isDelaySlot) {
         const opcode = (instruction >>> 26) & 0x3F;
 
         switch (opcode) {
-            case 0x00: return this.opSPECIAL(instruction, currentPc);
-            case 0x01: return this.opREGIMM(instruction, currentPc);
-            case 0x02: return this.opJ(instruction, currentPc);
-            case 0x03: return this.opJAL(instruction, currentPc);
-            case 0x04: return this.opBEQ(instruction, currentPc);
-            case 0x05: return this.opBNE(instruction, currentPc);
-            case 0x06: return this.opBLEZ(instruction, currentPc);
-            case 0x07: return this.opBGTZ(instruction, currentPc);
-            case 0x14: return this.opBEQL(instruction, currentPc);
-            case 0x15: return this.opBNEL(instruction, currentPc);
-            case 0x16: return this.opBLEZL(instruction, currentPc);
-            case 0x17: return this.opBGTZL(instruction, currentPc);
-            case 0x12: return this.opCOP2(instruction, currentPc);
-            case 0x1C: return this.opSPECIAL2(instruction, currentPc);
+            case 0x00: return this.opSPECIAL(instruction, currentPc, isDelaySlot);
+            case 0x01: return this.opREGIMM(instruction, currentPc, isDelaySlot);
+            case 0x02: return this.opJ(instruction, currentPc, isDelaySlot);
+            case 0x03: return this.opJAL(instruction, currentPc, isDelaySlot);
+            case 0x04: return this.opBEQ(instruction, currentPc, isDelaySlot);
+            case 0x05: return this.opBNE(instruction, currentPc, isDelaySlot);
+            case 0x06: return this.opBLEZ(instruction, currentPc, isDelaySlot);
+            case 0x07: return this.opBGTZ(instruction, currentPc, isDelaySlot);
+            case 0x14: return this.opBEQL(instruction, currentPc, isDelaySlot);
+            case 0x15: return this.opBNEL(instruction, currentPc, isDelaySlot);
+            case 0x16: return this.opBLEZL(instruction, currentPc, isDelaySlot);
+            case 0x17: return this.opBGTZL(instruction, currentPc, isDelaySlot);
+            case 0x12: return this.opCOP2(instruction, currentPc, isDelaySlot);
+            case 0x1C: return this.opSPECIAL2(instruction, currentPc, isDelaySlot);
             case 0x08:
             case 0x09: this.opADDIU(instruction); break;
             case 0x18: // DADDI
@@ -160,7 +183,7 @@ class CPU {
             case 0x0E: this.opXORI(instruction); break;
             case 0x0F: this.opLUI(instruction); break;
             case 0x10: if (this.opCOP0(instruction)) return null; break;
-            case 0x11: { const pc = this.opCOP1(instruction, currentPc); if (pc !== undefined) return pc; break; }
+            case 0x11: { const pc = this.opCOP1(instruction, currentPc, isDelaySlot); if (pc !== undefined) return pc; break; }
             case 0x1A: this.opLDL(instruction); break;
             case 0x1B: this.opLDR(instruction); break;
             case 0x20: this.opLB(instruction); break;
@@ -192,11 +215,14 @@ class CPU {
             case 0x37: this.opLD(instruction); break;
             case 0x3F: this.opSD(instruction); break;
             default:
-                if (instruction !== 0) console.warn(`Unknown opcode: 0x${opcode.toString(16).padStart(2, '0')} at PC 0x${BigInt.asUintN(32, currentPc).toString(16).padStart(8, '0')}`);
+                if (instruction !== 0 && !this.warnedOpcodes.has(opcode)) {
+                    console.warn(`Unknown opcode: 0x${opcode.toString(16).padStart(2, '0')} at PC 0x${BigInt.asUintN(32, currentPc).toString(16).padStart(8, '0')}`);
+                    this.warnedOpcodes.add(opcode);
+                }
         }
         return currentPc + 4n;
     }
-    opBEQL(instruction, currentPc) {
+    opBEQL(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
@@ -207,7 +233,7 @@ class CPU {
         }
         return currentPc + 8n;
     }
-    opBNEL(instruction, currentPc) {
+    opBNEL(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
@@ -218,7 +244,7 @@ class CPU {
         }
         return currentPc + 8n;
     }
-    opBLEZL(instruction, currentPc) {
+    opBLEZL(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         if (this.gpr[rs] <= 0n) {
@@ -228,7 +254,7 @@ class CPU {
         }
         return currentPc + 8n;
     }
-    opBGTZL(instruction, currentPc) {
+    opBGTZL(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         if (this.gpr[rs] > 0n) {
@@ -239,11 +265,11 @@ class CPU {
         return currentPc + 8n;
     }
 
-    opCOP2(instruction, currentPc) {
+    opCOP2(instruction, currentPc, isDelaySlot) {
         return currentPc + 4n;
     }
 
-    opSPECIAL2(instruction, currentPc) {
+    opSPECIAL2(instruction, currentPc, isDelaySlot) {
         const funct = instruction & 0x3F;
         if (funct === 0x02) { // MUL
             const rs = (instruction >>> 21) & 0x1F;
@@ -254,7 +280,7 @@ class CPU {
         return currentPc + 4n;
     }
 
-    opSPECIAL(instruction, currentPc) {
+    opSPECIAL(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const rd = (instruction >>> 11) & 0x1F;
@@ -275,8 +301,8 @@ class CPU {
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVZ
             case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVN
-            case 0x0C: return this.raiseException(8, currentPc, false); // SYSCALL
-            case 0x0D: return this.raiseException(9, currentPc, false); // BREAK
+            case 0x0C: return this.raiseException(8, currentPc, isDelaySlot); // SYSCALL
+            case 0x0D: return this.raiseException(9, currentPc, isDelaySlot); // BREAK
             case 0x0F: break; // SYNC
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
             case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
@@ -356,12 +382,12 @@ class CPU {
             case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break; // DADDU
             case 0x2E:
             case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break; // DSUBU
-            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TGE
-            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, false); break; // TGEU
-            case 0x32: if (this.gpr[rs] < this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TLT
-            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, false); break; // TLTU
-            case 0x34: if (this.gpr[rs] === this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TEQ
-            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TNE
+            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TGE
+            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, isDelaySlot); break; // TGEU
+            case 0x32: if (this.gpr[rs] < this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TLT
+            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, isDelaySlot); break; // TLTU
+            case 0x34: if (this.gpr[rs] === this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TEQ
+            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TNE
             case 0x38: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << BigInt(sa)); break; // DSLL
             case 0x3A: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRL
             case 0x3B: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRA
@@ -369,7 +395,10 @@ class CPU {
             case 0x3E: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRL32
             case 0x3F: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRA32
             default:
-                if (instruction !== 0) console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16).padStart(2, '0')} at PC 0x${BigInt.asUintN(32, currentPc).toString(16).padStart(8, '0')}`);
+                if (instruction !== 0 && !this.warnedSpecial.has(funct)) {
+                    console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16).padStart(2, '0')} at PC 0x${BigInt.asUintN(32, currentPc).toString(16).padStart(8, '0')}`);
+                    this.warnedSpecial.add(funct);
+                }
         }
         return currentPc + 4n;
     }
@@ -421,7 +450,7 @@ class CPU {
         const imm = BigInt(instruction & 0xFFFF);
         this.gpr[rt] = BigInt.asIntN(32, imm << 16n);
     }
-    opBEQ(instruction, currentPc) {
+    opBEQ(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
@@ -431,7 +460,7 @@ class CPU {
         }
         return currentPc + 4n;
     }
-    opBNE(instruction, currentPc) {
+    opBNE(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
@@ -441,7 +470,7 @@ class CPU {
         }
         return currentPc + 4n;
     }
-    opBLEZ(instruction, currentPc) {
+    opBLEZ(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         if (this.gpr[rs] <= 0n) {
@@ -450,7 +479,7 @@ class CPU {
         }
         return currentPc + 4n;
     }
-    opBGTZ(instruction, currentPc) {
+    opBGTZ(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         if (this.gpr[rs] > 0n) {
@@ -459,17 +488,17 @@ class CPU {
         }
         return currentPc + 4n;
     }
-    opJ(instruction, currentPc) {
+    opJ(instruction, currentPc, isDelaySlot) {
         const target = BigInt(instruction & 0x03FFFFFF);
         this.branchTarget = (currentPc & 0xF0000000n) | (target << 2n);
         this.branchTaken = true;
         return currentPc + 4n;
     }
-    opJAL(instruction, currentPc) {
+    opJAL(instruction, currentPc, isDelaySlot) {
         this.gpr[31] = currentPc + 8n;
         return this.opJ(instruction, currentPc);
     }
-    opREGIMM(instruction, currentPc) {
+    opREGIMM(instruction, currentPc, isDelaySlot) {
         const rs = (instruction >>> 21) & 0x1F;
         const sub = (instruction >>> 16) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
@@ -772,7 +801,7 @@ class CPU {
         const addr = this.gpr[base] + offset;
         this.mmu.write64(Number(addr), this.fprView.getBigUint64(ft * 8, false));
     }
-    opCOP1(instruction, currentPc) {
+    opCOP1(instruction, currentPc, isDelaySlot) {
         const sub = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const fs = (instruction >>> 11) & 0x1F;
@@ -979,19 +1008,26 @@ class CPU {
     }
 
     raiseException(code, pc, isDelaySlot) {
-        this.cp0Registers[13] = (BigInt(code) << 2n); // Cause
-        if (isDelaySlot) {
-            this.cp0Registers[13] |= 0x80000000n; // BD bit
-            this.cp0Registers[14] = pc - 4n; // EPC
-        } else {
-            this.cp0Registers[14] = pc; // EPC
+        const status = this.cp0Registers[12];
+        if (!(status & 2n)) { // EXL bit
+            this.cp0Registers[13] = (BigInt(code) << 2n); // Cause
+            if (isDelaySlot) {
+                this.cp0Registers[13] |= 0x80000000n; // BD bit
+                this.cp0Registers[14] = pc - 4n; // EPC
+            } else {
+                this.cp0Registers[14] = pc; // EPC
+            }
+            this.cp0Registers[12] |= 2n; // Set EXL bit
         }
-        this.cp0Registers[12] |= 2n; // Set EXL bit
         this.pc = 0x80000180n; // General exception vector
         this.exceptionRaised = true;
-        if (code !== 0) { // Only log non-interrupt exceptions to avoid spam
-            const instruction = this.mmu.read32(Number(pc));
-            console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')})`);
+        if (code !== 0) {
+            const pcKey = `${code}_${pc}`;
+            if (!this.warnedExceptions.has(pcKey)) {
+                const instruction = this.mmu.read32(Number(pc));
+                console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')}) EXL=${status & 2n}`);
+                this.warnedExceptions.add(pcKey);
+            }
         }
         return null;
     }

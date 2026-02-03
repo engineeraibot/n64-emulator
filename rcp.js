@@ -212,12 +212,18 @@ class RCP {
             projectionMatrix: this.createIdentityMatrix(),
             depthImage: 0,
             colorImage: 0,
+            colorImageWidth: 320,
+            colorImageFormat: 3,
+            colorImageSize: 2,
             textureImage: 0,
-            tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0 })),
+            tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0, uls: 0, ult: 0, lrs: 0, lrt: 0 })),
             combine: { hi: 0, lo: 0 },
+            useTexture: false,
             otherModeHi: 0,
             otherModeLo: 0,
-            fillColor: 0
+            fillColor: 0,
+            textureScaleS: 1.0,
+            textureScaleT: 1.0
         };
         this.warnedCommands = new Set();
         this.executeDisplayList(addr);
@@ -289,6 +295,9 @@ class RCP {
                     break;
                 case 0xFF: // G_SETCIMG
                     this.rspState.colorImage = this.resolveAddress(lo);
+                    this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
+                    this.rspState.colorImageFormat = (hi >>> 21) & 0x7;
+                    this.rspState.colorImageSize = (hi >>> 19) & 0x3;
                     break;
                 case 0xFE: // G_SETZIMG
                     this.rspState.depthImage = this.resolveAddress(lo);
@@ -308,6 +317,8 @@ class RCP {
                 case 0xFC: // G_SETCOMBINE
                     this.rspState.combine.hi = hi & 0xFFFFFF;
                     this.rspState.combine.lo = lo;
+                    // If any of the color sources is TEXEL0 or TEXEL1
+                    this.rspState.useTexture = ((hi & 0x00F00000) !== 0) || ((lo & 0x000000F0) !== 0);
                     break;
                 case 0xF6: // G_FILLRECT
                     this.handleG_FILLRECT(hi, lo);
@@ -322,7 +333,8 @@ class RCP {
                     this.rspState.otherModeHi = lo;
                     break;
                 case 0xBB: // G_TEXTURE
-                    // lo contains scale S and T
+                    this.rspState.textureScaleS = (lo >>> 16) / 65536.0;
+                    this.rspState.textureScaleT = (lo & 0xFFFF) / 65536.0;
                     break;
                 case 0xE7: // G_DPPIPESYNC
                 case 0xE6: // G_RDPLOADSYNC
@@ -422,11 +434,20 @@ class RCP {
     }
 
     handleG_MOVEWORD(hi, lo) {
-        // Skeletons for state updates
+        const index = (hi >>> 16) & 0xFF;
+        const offset = hi & 0xFFFF;
+        if (index === 0x06) { // G_MW_SEGMENT
+            const seg = (offset >> 2) & 0xF;
+            this.rspState.segments[seg] = lo & 0xFFFFFF;
+        }
     }
 
     handleG_MOVEMEM(hi, lo) {
-        // Skeletons for matrix/light updates
+        const index = (hi >>> 16) & 0xFF;
+        const addr = this.resolveAddress(lo);
+        if (index === 0x01) { // G_MV_VIEWPORT
+            // Stub for viewport
+        }
     }
 
     handleG_SETTILE(hi, lo) {
@@ -538,9 +559,10 @@ class RCP {
         const endX = Math.floor(x2 / 4);
         const endY = Math.floor(y2 / 4);
 
+        const width = this.rspState.colorImageWidth;
         for (let y = startY; y < endY; y++) {
             for (let x = startX; x < endX; x++) {
-                const pAddr = (addr + (y * 320 + x) * 2) & 0x7FFFFF;
+                const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
                 if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
                     rdramView.setUint16(pAddr, color, false);
                 }
@@ -563,25 +585,33 @@ class RCP {
 
         const rdramView = new DataView(this.mmu.memory.rdram);
         const tile = this.rspState.tiles[0]; // Simplified: assume tile 0
+        const width = this.rspState.colorImageWidth;
 
         for (let y = minY; y <= maxY; y++) {
             if (y < 0 || y >= 240) continue;
             for (let x = minX; x <= maxX; x++) {
-                if (x < 0 || x >= 320) continue;
+                if (x < 0 || x >= width) continue;
                 const weights = this.getBarycentricWeights(x, y, x1, y1, x2, y2, x3, y3);
                 if (weights) {
                     let r, g, b;
 
                     // Texture coordinates
-                    const s = v1.s * weights.s + v2.s * weights.t + v3.s * weights.u;
-                    const t = v1.t * weights.s + v2.t * weights.t + v3.t * weights.u;
+                    const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
+                    const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
 
                     // Simplified texture sampling (Point sampling, 16-bit RGBA)
-                    const texS = Math.floor(s / 32) & 0x1F;
-                    const texT = Math.floor(t / 32) & 0x1F;
-                    const texAddr = (tile.tmem * 8) + (texT * 32 + texS) * 2;
+                    const texS = Math.floor(s / 32.0);
+                    const texT = Math.floor(t / 32.0);
 
-                    if (texAddr + 2 <= 4096 && this.rspState.textureImage !== 0) {
+                    const maskS = (tile.lrs - tile.uls) / 4 + 1;
+                    const maskT = (tile.lrt - tile.ult) / 4 + 1;
+                    const ts = Math.abs(texS) % (maskS || 32);
+                    const tt = Math.abs(texT) % (maskT || 32);
+
+                    const lineBytes = tile.line * 8;
+                    const texAddr = (tile.tmem * 8) + (tt * lineBytes + ts * 2);
+
+                    if (this.rspState.useTexture && texAddr + 2 <= 4096 && this.rspState.textureImage !== 0) {
                         const val = (this.tmem[texAddr] << 8) | this.tmem[texAddr + 1];
                         r = ((val >> 11) & 0x1F) << 3;
                         g = ((val >> 6) & 0x1F) << 3;
@@ -594,7 +624,7 @@ class RCP {
 
                     const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
 
-                    const pAddr = (addr + (y * 320 + x) * 2) & 0x7FFFFF;
+                    const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
                     if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
                         rdramView.setUint16(pAddr, color16, false);
                     }
