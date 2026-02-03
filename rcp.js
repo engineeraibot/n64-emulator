@@ -24,6 +24,8 @@ class RCP {
             this.mmu.spRegisters[3] = value;
             this.doSpDma(true);
         } else if (regIdx === 4) { // SP_STATUS_REG
+            const oldStatus = this.mmu.spRegisters[4];
+            console.log(`SP_STATUS Write: 0x${value.toString(16)} (Old: 0x${oldStatus.toString(16)})`);
             if (value & 0x00000001) this.mmu.spRegisters[4] &= ~0x01; // Clear halt
             if (value & 0x00000002) this.mmu.spRegisters[4] |= 0x01;  // Set halt
             if (value & 0x00000004) this.mmu.spRegisters[4] &= ~0x02; // Clear broke
@@ -51,7 +53,8 @@ class RCP {
             if (value & 0x01000000) this.mmu.spRegisters[4] |= 0x00000800;  // Set signal 7
 
             // Auto-complete RSP task for now (HLE)
-            if (!(this.mmu.spRegisters[4] & 0x01)) {
+            if ((oldStatus & 0x01) && !(this.mmu.spRegisters[4] & 0x01)) {
+                console.log(`RSP Task Triggered: SP_STATUS write=0x${value.toString(16)}`);
                 this.runRspTask();
                 this.mmu.spRegisters[4] |= 0x03; // Halt and Broke
                 this.mmu.miRegisters[2] |= 0x01; // SP Interrupt
@@ -152,20 +155,21 @@ class RCP {
         // OSTask structure is usually at SP_DMEM 0xFC0
         const taskPtr = 0xFC0;
         const type = this.mmu.spDmemView.getUint32(taskPtr + 0x00, false);
-        if (this.lastTaskType !== type) {
-            console.log(`RSP Task: Type=${type}`);
-            this.lastTaskType = type;
-        }
+        const flags = this.mmu.spDmemView.getUint32(taskPtr + 0x04, false);
+        const ucode = this.mmu.spDmemView.getUint32(taskPtr + 0x10, false);
+
         const dataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x30, false) & 0xFFFFFF;
+        console.log(`RSP Task: Type=${type} Flags=0x${flags.toString(16)} ucode=0x${ucode.toString(16)} dataPtr=0x${dataPtr.toString(16)}`);
         const dataSize = this.mmu.spDmemView.getUint32(taskPtr + 0x34, false);
         const yieldDataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x38, false) & 0xFFFFFF;
 
         if (type === 4) { // Decompression Task HLE
+            // For MIO0 task: dataPtr is compressed source, yieldDataPtr is destination
             const output = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr);
             if (output) {
                 const rdramView = new Uint8Array(this.mmu.memory.rdram);
                 rdramView.set(output, yieldDataPtr);
-                console.log(`HLE: Decompressed MIO0 at 0x${dataPtr.toString(16)} to 0x${yieldDataPtr.toString(16)}`);
+                console.log(`HLE: Decompressed MIO0 at 0x${dataPtr.toString(16)} to 0x${yieldDataPtr.toString(16)} (size: ${output.length})`);
             }
         } else if (type === 1) { // Graphics Task HLE
             this.processDisplayList(dataPtr | 0x80000000);
