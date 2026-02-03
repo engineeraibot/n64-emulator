@@ -53,22 +53,26 @@ class CPU {
             return;
         }
 
-        const entryPoint = memory.readRom32(0x08);
-        console.log(`HLE Boot: Entry Point from header = 0x${entryPoint.toString(16)}`);
-        this.pc = 0x80000400n;
-
-        this.gpr[16] = 0xA4000000n; // s0: ROM header address
-        this.gpr[20] = 0x00000001n; // s4: cart type?
-        this.gpr[29] = 0x80370000n; // SP
-        this.gpr[31] = 0x80000000n; // RA
-
-        const ramAddr = 0x400;
-        const bootSize = Math.min(memory.rdram.byteLength - ramAddr, memory.rom.byteLength - 0x1000);
-        const romView = new Uint8Array(memory.rom, 0x1000, bootSize);
-        const rdramView = new Uint8Array(memory.rdram, ramAddr, bootSize);
+        // Low-level HLE Boot: Start from IPL3 (the game's bootloader)
+        // PIF ROM copies 0xFC0 bytes from ROM 0x40 to RDRAM 0x400
+        const bootSize = 0x1000 - 0x40;
+        const romView = new Uint8Array(memory.rom, 0x40, bootSize);
+        const rdramView = new Uint8Array(memory.rdram, 0x400, bootSize);
         rdramView.set(romView);
+        console.log(`HLE Boot: Copied IPL3 (0x${bootSize.toString(16)} bytes) to RDRAM 0x400`);
 
-        console.log(`HLE Boot: Copied ${bootSize} bytes to RDRAM @ 0x${ramAddr.toString(16)}`);
+        // Initialize registers as expected by IPL3
+        this.pc = 0x80000400n;
+        this.gpr[16] = 0xA4000000n; // s0
+        this.gpr[20] = 0x00000001n; // s4
+        this.gpr[22] = 0xA4000040n; // s6
+        this.gpr[29] = 0x80370000n; // sp
+        this.gpr[31] = 0x80000000n; // ra
+
+        // IPL3 expects some values in SP DMEM
+        this.mmu.write32(0xA4000004, 0x00000000);
+        this.mmu.write32(0xA400000C, 0x00000000);
+
         this.isHleBootDone = true;
     }
 
@@ -103,13 +107,13 @@ class CPU {
         const currentPc = this.pc;
         const instruction = this.mmu.read32(Number(currentPc));
 
-
         const nextPc = this.decodeAndExecute(instruction, currentPc);
         if (nextPc === null) return; // PC already updated (e.g., ERET)
 
         if (this.branchTaken) {
             const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
             this.decodeAndExecute(delaySlotInstruction, currentPc + 4n);
+
             this.pc = BigInt.asIntN(32, this.branchTarget);
             this.branchTaken = false;
         } else {
@@ -135,8 +139,8 @@ class CPU {
             case 0x15: return this.opBNEL(instruction, currentPc);
             case 0x16: return this.opBLEZL(instruction, currentPc);
             case 0x17: return this.opBGTZL(instruction, currentPc);
-            case 0x12: break; // COP2
-            case 0x1C: break; // SPECIAL2?
+            case 0x12: return this.opCOP2(instruction, currentPc);
+            case 0x1C: return this.opSPECIAL2(instruction, currentPc);
             case 0x08:
             case 0x09: this.opADDIU(instruction); break;
             case 0x18: // DADDI
@@ -180,7 +184,7 @@ class CPU {
             case 0x37: this.opLD(instruction); break;
             case 0x3F: this.opSD(instruction); break;
             default:
-                console.warn(`Unknown opcode: 0x${opcode.toString(16).padStart(2, '0')} at PC 0x${(currentPc & 0xFFFFFFFFn).toString(16).padStart(8, '0')}`);
+                if (instruction !== 0) console.warn(`Unknown opcode: 0x${opcode.toString(16).padStart(2, '0')} at PC 0x${BigInt.asUintN(32, currentPc).toString(16).padStart(8, '0')}`);
         }
         return currentPc + 4n;
     }
@@ -227,6 +231,21 @@ class CPU {
         return currentPc + 8n;
     }
 
+    opCOP2(instruction, currentPc) {
+        return currentPc + 4n;
+    }
+
+    opSPECIAL2(instruction, currentPc) {
+        const funct = instruction & 0x3F;
+        if (funct === 0x02) { // MUL
+            const rs = (instruction >>> 21) & 0x1F;
+            const rt = (instruction >>> 16) & 0x1F;
+            const rd = (instruction >>> 11) & 0x1F;
+            this.gpr[rd] = BigInt.asIntN(32, BigInt.asIntN(32, this.gpr[rs]) * BigInt.asIntN(32, this.gpr[rt]));
+        }
+        return currentPc + 4n;
+    }
+
     opSPECIAL(instruction, currentPc) {
         const rs = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
@@ -248,6 +267,7 @@ class CPU {
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVZ
             case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVN
+            case 0x0C: this.raiseException(8, currentPc, false); break; // SYSCALL
             case 0x0D: this.raiseException(9, currentPc, false); break; // BREAK
             case 0x0F: break; // SYNC
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
@@ -341,7 +361,7 @@ class CPU {
             case 0x3E: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRL32
             case 0x3F: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break; // DSRA32
             default:
-                console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16).padStart(2, '0')} at PC 0x${(currentPc & 0xFFFFFFFFn).toString(16).padStart(8, '0')}`);
+                if (instruction !== 0) console.warn(`Unknown SPECIAL funct: 0x${funct.toString(16).padStart(2, '0')} at PC 0x${BigInt.asUintN(32, currentPc).toString(16).padStart(8, '0')}`);
         }
         return currentPc + 4n;
     }
@@ -446,15 +466,26 @@ class CPU {
         const sub = (instruction >>> 16) & 0x1F;
         const imm = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         let taken = false;
+        let link = false;
+        let likely = false;
         switch (sub) {
-            case 0x00: if (this.gpr[rs] < 0n) taken = true; break;
-            case 0x01: if (this.gpr[rs] >= 0n) taken = true; break;
+            case 0x00: if (this.gpr[rs] < 0n) taken = true; break; // BLTZ
+            case 0x01: if (this.gpr[rs] >= 0n) taken = true; break; // BGEZ
+            case 0x02: if (this.gpr[rs] < 0n) { taken = true; likely = true; } break; // BLTZL
+            case 0x03: if (this.gpr[rs] >= 0n) { taken = true; likely = true; } break; // BGEZL
+            case 0x10: if (this.gpr[rs] < 0n) { taken = true; link = true; } break; // BLTZAL
+            case 0x11: if (this.gpr[rs] >= 0n) { taken = true; link = true; } break; // BGEZAL
+            case 0x12: if (this.gpr[rs] < 0n) { taken = true; link = true; likely = true; } break; // BLTZALL
+            case 0x13: if (this.gpr[rs] >= 0n) { taken = true; link = true; likely = true; } break; // BGEZALL
         }
+        if (link) this.gpr[31] = currentPc + 8n;
         if (taken) {
             this.branchTarget = currentPc + 4n + (imm << 2n);
             this.branchTaken = true;
+            return currentPc + 4n;
+        } else {
+            return likely ? currentPc + 8n : currentPc + 4n;
         }
-        return currentPc + 4n;
     }
     opLB(instruction) {
         const base = (instruction >>> 21) & 0x1F;
