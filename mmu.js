@@ -93,7 +93,7 @@ class MMU {
         else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) return this.viRegisters[(physicalAddress - MMU.VI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) {
             const regIdx = (physicalAddress - MMU.PI_REGS_START) >> 2;
-            if (regIdx === 4) return 0; // PI_STATUS: not busy
+            if (regIdx === 4) return this.piRegisters[4];
             return this.piRegisters[regIdx];
         }
         else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) {
@@ -165,8 +165,14 @@ class MMU {
             if (value & 0x02) this.miRegisters[2] &= ~0x10; // Clear PI interrupt
         } else {
             this.piRegisters[regIdx] = value;
-            if (regIdx === 2) this.doPiDma(false); // DRAM -> Cart
-            if (regIdx === 3) this.doPiDma(true);  // Cart -> DRAM
+            if (regIdx === 2) { // DRAM -> Cart
+                this.piRegisters[4] |= 0x01; // DMA busy
+                this.doPiDma(false);
+            }
+            if (regIdx === 3) { // Cart -> DRAM
+                this.piRegisters[4] |= 0x01; // DMA busy
+                this.doPiDma(true);
+            }
         }
     }
 
