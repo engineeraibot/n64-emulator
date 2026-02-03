@@ -108,25 +108,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
     animate();
 
+    const buttonMasks = {
+        'a-btn': 0x8000, 'b-btn': 0x4000, 'z-btn': 0x2000, 'start-btn': 0x1000,
+        'd-up': 0x0800, 'd-down': 0x0400, 'd-left': 0x0200, 'd-right': 0x0100,
+        'l-btn': 0x0020, 'r-btn': 0x0010,
+        'c-up': 0x0008, 'c-down': 0x0004, 'c-left': 0x0002, 'c-right': 0x0001
+    };
+
+    let currentButtons = 0;
+    let currentStickX = 0;
+    let currentStickY = 0;
+
     const buttons = document.querySelectorAll('.btn');
     const joystick = document.querySelector('.joystick');
 
     buttons.forEach(button => {
-        button.addEventListener('mousedown', () => console.log(`${button.id} pressed`));
-        button.addEventListener('mouseup', () => console.log(`${button.id} released`));
-        button.addEventListener('touchstart', (e) => { e.preventDefault(); console.log(`${button.id} pressed`); });
-        button.addEventListener('touchend', (e) => { e.preventDefault(); console.log(`${button.id} released`); });
+        const mask = buttonMasks[button.id];
+        const onPress = () => { currentButtons |= mask; mmu.updateController(currentButtons, currentStickX, currentStickY); };
+        const onRelease = () => { currentButtons &= ~mask; mmu.updateController(currentButtons, currentStickX, currentStickY); };
+
+        button.addEventListener('mousedown', onPress);
+        button.addEventListener('mouseup', onRelease);
+        button.addEventListener('touchstart', (e) => { e.preventDefault(); onPress(); });
+        button.addEventListener('touchend', (e) => { e.preventDefault(); onRelease(); });
     });
 
     if (joystick) {
-        joystick.addEventListener('mousedown', handleJoystickMove);
-        joystick.addEventListener('touchstart', (e) => { e.preventDefault(); handleJoystickMove(e.touches[0]); });
-    }
+        const onMove = (e) => {
+            const rect = joystick.getBoundingClientRect();
+            const clientX = e.clientX || e.touches[0].clientX;
+            const clientY = e.clientY || e.touches[0].clientY;
+            const x = ((clientX - rect.left) / rect.width - 0.5) * 2;
+            const y = ((clientY - rect.top) / rect.height - 0.5) * -2;
+            currentStickX = Math.max(-128, Math.min(127, Math.floor(x * 127)));
+            currentStickY = Math.max(-128, Math.min(127, Math.floor(y * 127)));
+            mmu.updateController(currentButtons, currentStickX, currentStickY);
+        };
+        const onEnd = () => {
+            currentStickX = 0;
+            currentStickY = 0;
+            mmu.updateController(currentButtons, currentStickX, currentStickY);
+        };
 
-    function handleJoystickMove(event) {
-        const rect = joystick.getBoundingClientRect();
-        const x = event.clientX - rect.left - (rect.width / 2);
-        const y = event.clientY - rect.top - (rect.height / 2);
-        console.log(`Joystick move: x=${x}, y=${y}`);
+        joystick.addEventListener('mousemove', (e) => { if (e.buttons & 1) onMove(e); });
+        joystick.addEventListener('touchmove', (e) => { e.preventDefault(); onMove(e); });
+        joystick.addEventListener('mouseup', onEnd);
+        joystick.addEventListener('touchend', onEnd);
     }
 });

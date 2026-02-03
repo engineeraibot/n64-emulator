@@ -37,7 +37,7 @@ class CPU {
 
         const runFrame = () => {
             if (!this.isRunning) return;
-            for (let i = 0; i < 500000; i++) {
+            for (let i = 0; i < 1000000; i++) {
                 this.step();
             }
             requestAnimationFrame(runFrame);
@@ -88,9 +88,6 @@ class CPU {
 
     step() {
         this.instructionCount++;
-        if (this.instructionCount % 1000000 === 0) {
-            console.log(`CPU: PC=0x${this.pc.toString(16)} InstrCount=${this.instructionCount}`);
-        }
 
         this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn; // Count
         if (this.cp0Registers[9] === this.cp0Registers[11]) {
@@ -984,6 +981,8 @@ class CPU {
         }
         this.cp0Registers[12] |= 2n; // Set EXL bit
         this.pc = 0x80000180n; // General exception vector
-        console.warn(`Exception ${code} at PC 0x${pc.toString(16)}`);
+        if (code !== 0) { // Only log non-interrupt exceptions to avoid spam
+            console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)}`);
+        }
     }
 }
