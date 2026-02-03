@@ -24,6 +24,7 @@ class CPU {
         this.branchTaken = false;
         this.branchTarget = 0n;
         this.isHleBootDone = false;
+        this.exceptionRaised = false;
     }
 
     run() {
@@ -37,7 +38,8 @@ class CPU {
 
         const runFrame = () => {
             if (!this.isRunning) return;
-            for (let i = 0; i < 1000000; i++) {
+            // High instructions per frame for SM64
+            for (let i = 0; i < 5000000; i++) {
                 this.step();
             }
             requestAnimationFrame(runFrame);
@@ -112,8 +114,9 @@ class CPU {
         const currentPc = this.pc;
         const instruction = this.mmu.read32(Number(currentPc));
 
+        this.exceptionRaised = false;
         const nextPc = this.decodeAndExecute(instruction, currentPc);
-        if (nextPc === null) return; // PC already updated (e.g., ERET)
+        if (this.exceptionRaised || nextPc === null) return;
 
         if (this.branchTaken) {
             const delaySlotInstruction = this.mmu.read32(Number(currentPc + 4n));
@@ -272,8 +275,8 @@ class CPU {
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVZ
             case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVN
-            case 0x0C: this.raiseException(8, currentPc, false); break; // SYSCALL
-            case 0x0D: this.raiseException(9, currentPc, false); break; // BREAK
+            case 0x0C: return this.raiseException(8, currentPc, false); // SYSCALL
+            case 0x0D: return this.raiseException(9, currentPc, false); // BREAK
             case 0x0F: break; // SYNC
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
             case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
@@ -353,12 +356,12 @@ class CPU {
             case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break; // DADDU
             case 0x2E:
             case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break; // DSUBU
-            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TGE
-            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) this.raiseException(13, currentPc, false); break; // TGEU
-            case 0x32: if (this.gpr[rs] < this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TLT
-            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) this.raiseException(13, currentPc, false); break; // TLTU
-            case 0x34: if (this.gpr[rs] === this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TEQ
-            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) this.raiseException(13, currentPc, false); break; // TNE
+            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TGE
+            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, false); break; // TGEU
+            case 0x32: if (this.gpr[rs] < this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TLT
+            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, false); break; // TLTU
+            case 0x34: if (this.gpr[rs] === this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TEQ
+            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) return this.raiseException(13, currentPc, false); break; // TNE
             case 0x38: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << BigInt(sa)); break; // DSLL
             case 0x3A: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRL
             case 0x3B: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRA
@@ -635,19 +638,20 @@ class CPU {
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const addr = this.gpr[base] + offset;
-        const byteOffset = Number(addr & 7n);
         const dword = this.mmu.read64(Number(addr & ~7n));
         const rtVal = this.gpr[rt];
+        const byteOffset = Number(addr & 7n);
         let result;
+        // LDL Big-Endian: Load B0..Bn into R0..Rn
         switch (byteOffset) {
-            case 0: result = dword; break;
-            case 1: result = (rtVal & 0x00000000000000FFn) | (dword << 8n); break;
-            case 2: result = (rtVal & 0x000000000000FFFFn) | (dword << 16n); break;
-            case 3: result = (rtVal & 0x0000000000FFFFFFn) | (dword << 24n); break;
-            case 4: result = (rtVal & 0x00000000FFFFFFFFn) | (dword << 32n); break;
-            case 5: result = (rtVal & 0x000000FFFFFFFFFFn) | (dword << 40n); break;
-            case 6: result = (rtVal & 0x0000FFFFFFFFFFFFn) | (dword << 48n); break;
-            case 7: result = (rtVal & 0x00FFFFFFFFFFFFFFn) | (dword << 56n); break;
+            case 0: result = (rtVal & 0x00FFFFFFFFFFFFFFn) | (dword & 0xFF00000000000000n); break;
+            case 1: result = (rtVal & 0x0000FFFFFFFFFFFFn) | (dword & 0xFFFF000000000000n); break;
+            case 2: result = (rtVal & 0x000000FFFFFFFFFFn) | (dword & 0xFFFFFF0000000000n); break;
+            case 3: result = (rtVal & 0x00000000FFFFFFFFn) | (dword & 0xFFFFFFFF00000000n); break;
+            case 4: result = (rtVal & 0x0000000000FFFFFFn) | (dword & 0xFFFFFFFFFF000000n); break;
+            case 5: result = (rtVal & 0x000000000000FFFFn) | (dword & 0xFFFFFFFFFFFF0000n); break;
+            case 6: result = (rtVal & 0x00000000000000FFn) | (dword & 0xFFFFFFFFFFFFFF00n); break;
+            case 7: result = dword; break;
         }
         this.gpr[rt] = result;
     }
@@ -656,19 +660,20 @@ class CPU {
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const addr = this.gpr[base] + offset;
-        const byteOffset = Number(addr & 7n);
         const dword = this.mmu.read64(Number(addr & ~7n));
         const rtVal = this.gpr[rt];
+        const byteOffset = Number(addr & 7n);
         let result;
+        // LDR Big-Endian: Load Bn..B7 into Rn..R7
         switch (byteOffset) {
-            case 0: result = (rtVal & 0xFFFFFFFFFFFFFF00n) | (dword >> 56n); break;
-            case 1: result = (rtVal & 0xFFFFFFFFFFFF0000n) | (dword >> 48n); break;
-            case 2: result = (rtVal & 0xFFFFFFFFFF000000n) | (dword >> 40n); break;
-            case 3: result = (rtVal & 0xFFFFFFFF00000000n) | (dword >> 32n); break;
-            case 4: result = (rtVal & 0xFFFFFF0000000000n) | (dword >> 24n); break;
-            case 5: result = (rtVal & 0xFFFF000000000000n) | (dword >> 16n); break;
-            case 6: result = (rtVal & 0xFF00000000000000n) | (dword >> 8n); break;
-            case 7: result = dword; break;
+            case 0: result = dword; break;
+            case 1: result = (rtVal & 0xFF00000000000000n) | (dword & 0x00FFFFFFFFFFFFFFn); break;
+            case 2: result = (rtVal & 0xFFFF000000000000n) | (dword & 0x0000FFFFFFFFFFFFn); break;
+            case 3: result = (rtVal & 0xFFFFFF0000000000n) | (dword & 0x000000FFFFFFFFFFn); break;
+            case 4: result = (rtVal & 0xFFFFFFFF00000000n) | (dword & 0x00000000FFFFFFFFn); break;
+            case 5: result = (rtVal & 0xFFFFFFFFFF000000n) | (dword & 0x0000000000FFFFFFn); break;
+            case 6: result = (rtVal & 0xFFFFFFFFFFFF0000n) | (dword & 0x000000000000FFFFn); break;
+            case 7: result = (rtVal & 0xFFFFFFFFFFFFFF00n) | (dword & 0x00000000000000FFn); break;
         }
         this.gpr[rt] = result;
     }
@@ -677,19 +682,20 @@ class CPU {
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const addr = this.gpr[base] + offset;
-        const byteOffset = Number(addr & 7n);
         const wordAddr = Number(addr & ~7n);
+        const byteOffset = Number(addr & 7n);
         let dword = this.mmu.read64(wordAddr);
         const rtVal = this.gpr[rt];
+        // SDL Big-Endian: Store R0..Rn into B0..Bn
         switch (byteOffset) {
-            case 0: dword = rtVal; break;
-            case 1: dword = (dword & 0xFF00000000000000n) | (rtVal >> 8n); break;
-            case 2: dword = (dword & 0xFFFF000000000000n) | (rtVal >> 16n); break;
-            case 3: dword = (dword & 0xFFFFFF0000000000n) | (rtVal >> 24n); break;
-            case 4: dword = (dword & 0xFFFFFFFF00000000n) | (rtVal >> 32n); break;
-            case 5: dword = (dword & 0xFFFFFFFFFF000000n) | (rtVal >> 40n); break;
-            case 6: dword = (dword & 0xFFFFFFFFFFFF0000n) | (rtVal >> 48n); break;
-            case 7: dword = (dword & 0xFFFFFFFFFFFFFF00n) | (rtVal >> 56n); break;
+            case 0: dword = (dword & 0x00FFFFFFFFFFFFFFn) | (rtVal & 0xFF00000000000000n); break;
+            case 1: dword = (dword & 0x0000FFFFFFFFFFFFn) | (rtVal & 0xFFFF000000000000n); break;
+            case 2: dword = (dword & 0x000000FFFFFFFFFFn) | (rtVal & 0xFFFFFF0000000000n); break;
+            case 3: dword = (dword & 0x00000000FFFFFFFFn) | (rtVal & 0xFFFFFFFF00000000n); break;
+            case 4: dword = (dword & 0x0000000000FFFFFFn) | (rtVal & 0xFFFFFFFFFF000000n); break;
+            case 5: dword = (dword & 0x000000000000FFFFn) | (rtVal & 0xFFFFFFFFFFFF0000n); break;
+            case 6: dword = (dword & 0x00000000000000FFn) | (rtVal & 0xFFFFFFFFFFFFFF00n); break;
+            case 7: dword = rtVal; break;
         }
         this.mmu.write64(wordAddr, dword);
     }
@@ -698,19 +704,20 @@ class CPU {
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const addr = this.gpr[base] + offset;
-        const byteOffset = Number(addr & 7n);
         const wordAddr = Number(addr & ~7n);
+        const byteOffset = Number(addr & 7n);
         let dword = this.mmu.read64(wordAddr);
         const rtVal = this.gpr[rt];
+        // SDR Big-Endian: Store Rn..R7 into Bn..B7
         switch (byteOffset) {
-            case 0: dword = (dword & 0x00FFFFFFFFFFFFFFn) | (rtVal << 56n); break;
-            case 1: dword = (dword & 0x0000FFFFFFFFFFFFn) | (rtVal << 48n); break;
-            case 2: dword = (dword & 0x000000FFFFFFFFFFn) | (rtVal << 40n); break;
-            case 3: dword = (dword & 0x00000000FFFFFFFFn) | (rtVal << 32n); break;
-            case 4: dword = (dword & 0x0000000000FFFFFFn) | (rtVal << 24n); break;
-            case 5: dword = (dword & 0x000000000000FFFFn) | (rtVal << 16n); break;
-            case 6: dword = (dword & 0x00000000000000FFn) | (rtVal << 8n); break;
-            case 7: dword = rtVal; break;
+            case 0: dword = rtVal; break;
+            case 1: dword = (dword & 0xFF00000000000000n) | (rtVal & 0x00FFFFFFFFFFFFFFn); break;
+            case 2: dword = (dword & 0xFFFF000000000000n) | (rtVal & 0x0000FFFFFFFFFFFFn); break;
+            case 3: dword = (dword & 0xFFFFFF0000000000n) | (rtVal & 0x000000FFFFFFFFFFn); break;
+            case 4: dword = (dword & 0xFFFFFFFF00000000n) | (rtVal & 0x00000000FFFFFFFFn); break;
+            case 5: dword = (dword & 0xFFFFFFFFFF000000n) | (rtVal & 0x0000000000FFFFFFn); break;
+            case 6: dword = (dword & 0xFFFFFFFFFFFF0000n) | (rtVal & 0x000000000000FFFFn); break;
+            case 7: dword = (dword & 0xFFFFFFFFFFFFFF00n) | (rtVal & 0x00000000000000FFn); break;
         }
         this.mmu.write64(wordAddr, dword);
     }
@@ -981,8 +988,11 @@ class CPU {
         }
         this.cp0Registers[12] |= 2n; // Set EXL bit
         this.pc = 0x80000180n; // General exception vector
+        this.exceptionRaised = true;
         if (code !== 0) { // Only log non-interrupt exceptions to avoid spam
-            console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)}`);
+            const instruction = this.mmu.read32(Number(pc));
+            console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')})`);
         }
+        return null;
     }
 }

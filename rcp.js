@@ -112,8 +112,18 @@ class RCP {
                 break;
             case 0x3F: // Fill Triangle
                 break;
+            case 0x3E: // Fill Z-Buffer Triangle
+                break;
+            case 0x24: // Texture Rectangle
+                break;
+            case 0x25: // Texture Rectangle Flip
+                break;
             case 0x27: // Sync Full
                 this.mmu.miRegisters[2] |= 0x20; // DP Interrupt
+                break;
+            case 0x28: // Sync Pipe
+            case 0x29: // Sync Tile
+            case 0x2A: // Sync Load
                 break;
         }
     }
@@ -158,7 +168,7 @@ class RCP {
                 console.log(`HLE: Decompressed MIO0 at 0x${dataPtr.toString(16)} to 0x${yieldDataPtr.toString(16)}`);
             }
         } else if (type === 1) { // Graphics Task HLE
-            this.processDisplayList(dataPtr);
+            this.processDisplayList(dataPtr | 0x80000000);
         }
     }
 
@@ -209,7 +219,7 @@ class RCP {
             otherModeLo: 0,
             fillColor: 0
         };
-
+        this.warnedCommands = new Set();
         this.executeDisplayList(addr);
     }
 
@@ -219,9 +229,9 @@ class RCP {
         let depth = 0;
         const stack = [];
 
-        while (pc < 0x800000) {
-            const hi = rdramView.getUint32(pc, false);
-            const lo = rdramView.getUint32(pc + 4, false);
+        while (pc >= 0x80000000 && pc < 0x80800000) {
+            const hi = rdramView.getUint32(pc & 0x7FFFFF, false);
+            const lo = rdramView.getUint32((pc + 4) & 0x7FFFFF, false);
             pc += 8;
 
             const cmd = (hi >>> 24) & 0xFF;
@@ -315,6 +325,18 @@ class RCP {
                     // lo contains scale S and T
                     break;
                 case 0xE7: // G_DPPIPESYNC
+                case 0xE6: // G_RDPLOADSYNC
+                case 0xE8: // G_DPFULLSYNC
+                case 0xE9: // G_DPTILESYNC
+                    break;
+                case 0xB3: // G_RDPHALF_1
+                case 0xB4: // G_RDPHALF_2
+                    break;
+                default:
+                    if (!this.warnedCommands.has(cmd)) {
+                        console.warn(`Unknown RSP Command: 0x${cmd.toString(16).padStart(2, '0')}`);
+                        this.warnedCommands.add(cmd);
+                    }
                     break;
             }
         }
@@ -322,7 +344,7 @@ class RCP {
 
     resolveAddress(addr) {
         const seg = (addr >>> 24) & 0xF;
-        return this.rspState.segments[seg] + (addr & 0xFFFFFF);
+        return (this.rspState.segments[seg] & 0xFFFFFF) + (addr & 0xFFFFFF) + 0x80000000;
     }
 
     handleG_VTX(hi, lo) {
@@ -336,7 +358,7 @@ class RCP {
         const mvp = this.multiplyMatrices(mv, p);
 
         for (let i = 0; i < num; i++) {
-            const vAddr = addr + i * 16;
+            const vAddr = (addr + i * 16) & 0x7FFFFF;
             const x = rdramView.getInt16(vAddr, false);
             const y = rdramView.getInt16(vAddr + 2, false);
             const z = rdramView.getInt16(vAddr + 4, false);
@@ -421,7 +443,7 @@ class RCP {
     handleG_MTX(hi, lo) {
         const flags = (hi >>> 16) & 0xFF;
         const addr = this.resolveAddress(lo);
-        const m = this.readMatrix(addr);
+        const m = this.readMatrix(addr & 0x7FFFFF);
 
         const G_MTX_PUSH = 0x01;
         const G_MTX_LOAD = 0x02;
@@ -459,8 +481,9 @@ class RCP {
 
         const rdramView = new Uint8Array(this.mmu.memory.rdram);
         for (let i = 0; i < size && (tmemAddr + i < 4096); i++) {
-            if (addr + i < rdramView.length) {
-                this.tmem[tmemAddr + i] = rdramView[addr + i];
+            const pAddr = (addr + i) & 0x7FFFFF;
+            if (pAddr < rdramView.length) {
+                this.tmem[tmemAddr + i] = rdramView[pAddr];
             }
         }
     }
@@ -481,7 +504,9 @@ class RCP {
         let dstOff = tmemAddr;
         for (let y = ult / 4; y < lrt / 4; y++) {
             for (let x = 0; x < line && (dstOff < 4096); x++) {
-                if (srcOff < rdramView.length) this.tmem[dstOff++] = rdramView[srcOff++];
+                const pAddr = srcOff & 0x7FFFFF;
+                if (pAddr < rdramView.length) this.tmem[dstOff++] = rdramView[pAddr];
+                srcOff++;
             }
         }
     }
@@ -515,7 +540,7 @@ class RCP {
 
         for (let y = startY; y < endY; y++) {
             for (let x = startX; x < endX; x++) {
-                const pAddr = addr + (y * 320 + x) * 2;
+                const pAddr = (addr + (y * 320 + x) * 2) & 0x7FFFFF;
                 if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
                     rdramView.setUint16(pAddr, color, false);
                 }
@@ -569,7 +594,7 @@ class RCP {
 
                     const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
 
-                    const pAddr = addr + (y * 320 + x) * 2;
+                    const pAddr = (addr + (y * 320 + x) * 2) & 0x7FFFFF;
                     if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
                         rdramView.setUint16(pAddr, color16, false);
                     }

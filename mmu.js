@@ -47,6 +47,7 @@ class MMU {
         this.buttons = 0;
         this.stickX = 0;
         this.stickY = 0;
+        this.eeprom = new Uint8Array(512);
     }
 
     updateController(buttons, x, y) {
@@ -196,22 +197,37 @@ class MMU {
 
                 const sendLen = this.pifRam[i] & 0x3F;
                 const recvLen = this.pifRam[i+1] & 0x3F;
+                if (sendLen === 0) { i += 2; continue; }
                 const cmd = this.pifRam[i+2];
+                const resIdx = i + 2 + sendLen;
+                if (resIdx >= 64) break;
 
                 if (cmd === 0x01 || cmd === 0xFF || cmd === 0x00) { // Read Controller or Info
                     if (cmd === 0x00 || cmd === 0xFF) { // Info
-                        this.pifRam[i+2] = 0x05; this.pifRam[i+3] = 0x00; this.pifRam[i+4] = 0x01;
+                        if (resIdx < 64) this.pifRam[resIdx] = 0x05;
+                        if (resIdx + 1 < 64) this.pifRam[resIdx+1] = 0x00;
+                        if (resIdx + 2 < 64) this.pifRam[resIdx+2] = 0x01;
                     } else { // Read
-                        this.pifRam[i+2] = (this.buttons >> 8) & 0xFF;
-                        this.pifRam[i+3] = this.buttons & 0xFF;
-                        this.pifRam[i+4] = this.stickX & 0xFF;
-                        this.pifRam[i+5] = this.stickY & 0xFF;
+                        if (resIdx < 64) this.pifRam[resIdx] = (this.buttons >> 8) & 0xFF;
+                        if (resIdx + 1 < 64) this.pifRam[resIdx+1] = this.buttons & 0xFF;
+                        if (resIdx + 2 < 64) this.pifRam[resIdx+2] = this.stickX & 0xFF;
+                        if (resIdx + 3 < 64) this.pifRam[resIdx+3] = this.stickY & 0xFF;
                     }
-                } else if (cmd === 0x04 || cmd === 0x05) { // EEPROM Read/Write
-                    // Return 0 (Success) for both
-                    for (let j = 0; j < recvLen; j++) this.pifRam[i+2+j] = 0;
+                } else if (cmd === 0x04) { // EEPROM Read
+                    const block = this.pifRam[i+3];
+                    for (let j = 0; j < 8; j++) {
+                        if (resIdx + j < 64) this.pifRam[resIdx+j] = this.eeprom[block * 8 + j];
+                    }
+                } else if (cmd === 0x05) { // EEPROM Write
+                    const block = this.pifRam[i+3];
+                    for (let j = 0; j < 8; j++) {
+                        this.eeprom[block * 8 + j] = this.pifRam[i+4+j];
+                    }
+                    if (resIdx < 64) this.pifRam[resIdx] = 0; // Success
                 } else if (cmd === 0x02 || cmd === 0x03) { // Write/Read Status
-                    for (let j = 0; j < recvLen; j++) this.pifRam[i+2+j] = 0;
+                    for (let j = 0; j < recvLen; j++) {
+                        if (resIdx + j < 64) this.pifRam[resIdx+j] = 0;
+                    }
                 } else {
                     // Unknown command, skip it to avoid getting stuck
                     i += 1;
