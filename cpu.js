@@ -39,20 +39,20 @@ class CPU {
             this.performHleBoot();
         }
 
-        const runFrame = () => {
+        const runLoop = () => {
             if (!this.isRunning) return;
-            // High instructions per frame for SM64, but not so high it freezes the browser
             const startTime = performance.now();
             let count = 0;
+            // Execute as many as possible within 16ms
             while (count < 2000000 && (performance.now() - startTime < 16)) {
                 for (let i = 0; i < 2000; i++) {
                     this.step();
                 }
                 count += 2000;
             }
-            requestAnimationFrame(runFrame);
+            setTimeout(runLoop, 0);
         };
-        requestAnimationFrame(runFrame);
+        runLoop();
     }
 
     performHleBoot() {
@@ -75,19 +75,23 @@ class CPU {
         this.pc = BigInt.asIntN(32, entryPoint);
 
         // Copy the boot segment from ROM 0x1000 to RAM
+        // Many games expect the first few megabytes to be loaded
         const ramOffset = Number(entryPoint & 0x00FFFFFFn);
-        const segmentSize = 0x100000; // Copy 1MB to be safe
-        if (ramOffset + segmentSize <= rdramView.length) {
+        const segmentSize = Math.min(romView.length - 0x1000, rdramView.length - ramOffset);
+        if (segmentSize > 0) {
             rdramView.set(romView.subarray(0x1000, 0x1000 + segmentSize), ramOffset);
+            console.log(`HLE Boot: Loaded ${segmentSize} bytes to RAM 0x${ramOffset.toString(16)}`);
         }
 
         console.log(`HLE Boot: Entry Point=0x${entryPoint.toString(16)}, RAM Offset=0x${ramOffset.toString(16)}`);
 
-        // Initialize registers as IPL3 would
+        // Initialize registers as IPL3 would for CIC-6102
         this.gpr[29] = BigInt.asIntN(32, 0x80370000n); // sp
-        this.gpr[31] = BigInt.asIntN(32, 0x80000000n); // ra
+        this.gpr[31] = 0n; // ra: standard is 0
         this.gpr[16] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0, false))); // s0: ROM Info
-        this.gpr[18] = 0x00000001n; // s2
+        this.gpr[17] = 0x00000001n; // s1: CIC type (1 for 6102)
+        this.gpr[18] = 0x00000000n; // s2
+        this.gpr[11] = 0x00000000n; // t3
 
         // Initial Status: CU0=1, CU1=1, BEV=0, EXL=0, IE=0
         this.cp0Registers[12] = 0x30000000n;
@@ -103,19 +107,18 @@ class CPU {
     step() {
         this.instructionCount++;
 
-        if ((this.instructionCount & 0x7FF) === 0) {
-            const prevCount = this.cp0Registers[9];
-            this.cp0Registers[9] = (prevCount + 2048n) & 0xFFFFFFFFn; // Count
+        // Count register increments at half CPU frequency
+        if ((this.instructionCount & 1) === 0) {
+            this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn;
+        }
+
+        // Check for interrupts periodically
+        if ((this.instructionCount & 0x3F) === 0) {
+            this.mmu.checkInternalEvents();
+            const count = this.cp0Registers[9];
             const compare = this.cp0Registers[11];
 
-            let triggered = false;
-            if (prevCount <= compare) {
-                if (this.cp0Registers[9] >= compare || this.cp0Registers[9] < prevCount) triggered = true;
-            } else {
-                if (this.cp0Registers[9] >= compare && this.cp0Registers[9] < prevCount) triggered = true;
-            }
-
-            if (triggered) {
+            if (count === compare) {
                 this.cp0Registers[13] |= 0x00008000n; // IP7 (Timer)
             }
 
@@ -494,12 +497,12 @@ class CPU {
     }
     opJ(instruction, currentPc, isDelaySlot) {
         const target = BigInt(instruction & 0x03FFFFFF);
-        this.branchTarget = (currentPc & 0xF0000000n) | (target << 2n);
+        this.branchTarget = BigInt.asIntN(32, (currentPc & 0xF0000000n) | (target << 2n));
         this.branchTaken = true;
         return currentPc + 4n;
     }
     opJAL(instruction, currentPc, isDelaySlot) {
-        this.gpr[31] = currentPc + 8n;
+        this.gpr[31] = BigInt.asIntN(32, currentPc + 8n);
         return this.opJ(instruction, currentPc);
     }
     opREGIMM(instruction, currentPc, isDelaySlot) {
@@ -1010,6 +1013,7 @@ class CPU {
         }
         return output;
     }
+
 
     raiseException(code, pc, isDelaySlot) {
         const status = this.cp0Registers[12];
