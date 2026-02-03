@@ -17,6 +17,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const mmu = new MMU(ram);
     const rcp = new RCP(mmu, framebuffer);
     const cpu = new CPU(mmu, rcp);
+    mmu.cpu = cpu;
+    mmu.rcp = rcp;
 
     romFileInput.addEventListener('change', (event) => {
         const file = event.target.files[0];

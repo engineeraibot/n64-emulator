@@ -37,7 +37,7 @@ class CPU {
 
         const runFrame = () => {
             if (!this.isRunning) return;
-            for (let i = 0; i < 100000; i++) {
+            for (let i = 0; i < 500000; i++) {
                 this.step();
             }
             requestAnimationFrame(runFrame);
@@ -46,32 +46,37 @@ class CPU {
     }
 
     performHleBoot() {
-        console.log("Performing HLE Boot...");
+        console.log("Performing HLE Boot (Skip IPL3)...");
         const memory = this.mmu.memory;
         if (!memory.rom) {
             console.error("HLE Boot: No ROM loaded!");
             return;
         }
 
-        // Low-level HLE Boot: Start from IPL3 (the game's bootloader)
-        // PIF ROM copies 0xFC0 bytes from ROM 0x40 to RDRAM 0x400
-        const bootSize = 0x1000 - 0x40;
-        const romView = new Uint8Array(memory.rom, 0x40, bootSize);
-        const rdramView = new Uint8Array(memory.rdram, 0x400, bootSize);
-        rdramView.set(romView);
-        console.log(`HLE Boot: Copied IPL3 (0x${bootSize.toString(16)} bytes) to RDRAM 0x400`);
+        const romView = new Uint8Array(memory.rom);
+        const rdramView = new Uint8Array(memory.rdram);
+        const romDataView = new DataView(memory.rom);
 
-        // Initialize registers as expected by IPL3
-        this.pc = 0x80000400n;
-        this.gpr[16] = 0xA4000000n; // s0
-        this.gpr[20] = 0x00000001n; // s4
-        this.gpr[22] = 0xA4000040n; // s6
+        // Copy header to RDRAM 0
+        rdramView.set(romView.subarray(0, 0x1000), 0);
+
+        // Read Entry Point from header offset 0x08
+        const entryPoint = BigInt(romDataView.getUint32(0x08, false)) & 0xFFFFFFFFn;
+        this.pc = BigInt.asIntN(32, entryPoint);
+
+        // Copy the boot segment from ROM 0x1000 to RAM
+        const ramOffset = Number(entryPoint & 0x00FFFFFFn);
+        const segmentSize = 0x100000; // Copy 1MB to be safe
+        if (ramOffset + segmentSize <= rdramView.length) {
+            rdramView.set(romView.subarray(0x1000, 0x1000 + segmentSize), ramOffset);
+        }
+
+        console.log(`HLE Boot: Entry Point=0x${entryPoint.toString(16)}, RAM Offset=0x${ramOffset.toString(16)}`);
+
+        // Initialize registers
         this.gpr[29] = 0x80370000n; // sp
         this.gpr[31] = 0x80000000n; // ra
-
-        // IPL3 expects some values in SP DMEM
-        this.mmu.write32(0xA4000004, 0x00000000);
-        this.mmu.write32(0xA400000C, 0x00000000);
+        this.cp0Registers[12] = 0x34000000n; // CU0, CU1 set
 
         this.isHleBootDone = true;
     }
@@ -83,6 +88,9 @@ class CPU {
 
     step() {
         this.instructionCount++;
+        if (this.instructionCount % 1000000 === 0) {
+            console.log(`CPU: PC=0x${this.pc.toString(16)} InstrCount=${this.instructionCount}`);
+        }
 
         this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn; // Count
         if (this.cp0Registers[9] === this.cp0Registers[11]) {
@@ -854,9 +862,36 @@ class CPU {
                 else if (funct === 0x0D) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // TRUNC.W.D
                 else if (funct === 0x0E) this.fprView.setInt32(fd * 8 + 4, Math.ceil(v1), false);  // CEIL.W.D
                 else if (funct === 0x0F) this.fprView.setInt32(fd * 8 + 4, Math.floor(v1), false); // FLOOR.W.D
+                else if (funct === 0x04) this.fprView.setFloat64(fd * 8, Math.sqrt(v1), false); // SQRT.D
+                else if (funct === 0x05) this.fprView.setFloat64(fd * 8, Math.abs(v1), false); // ABS.D
+                else if (funct === 0x06) this.fprView.setFloat64(fd * 8, v1, false); // MOV.D
+                else if (funct === 0x07) this.fprView.setFloat64(fd * 8, -v1, false); // NEG.D
                 else if (funct === 0x20) this.fprView.setFloat32(fd * 8 + 4, v1, false); // CVT.S.D
                 else if (funct === 0x24) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false); // CVT.W.D
                 else if (funct === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false); // CVT.L.D
+                else if ((funct & 0x30) === 0x30) { // C.xx.D
+                    let cond = false;
+                    const nan = isNaN(v1) || isNaN(v2);
+                    switch (funct & 0x0F) {
+                        case 0x00: cond = false; break; // F
+                        case 0x01: cond = nan; break; // UN
+                        case 0x02: cond = !nan && (v1 === v2); break; // EQ
+                        case 0x03: cond = nan || (v1 === v2); break; // UEQ
+                        case 0x04: cond = !nan && (v1 < v2); break; // OLT
+                        case 0x05: cond = nan || (v1 < v2); break; // ULT
+                        case 0x06: cond = !nan && (v1 <= v2); break; // OLE
+                        case 0x07: cond = nan || (v1 <= v2); break; // ULE
+                        case 0x08: cond = false; break; // SF
+                        case 0x09: cond = nan; break; // NGLE
+                        case 0x0A: cond = !nan && (v1 === v2); break; // SEQ
+                        case 0x0B: cond = nan || (v1 === v2); break; // NGL
+                        case 0x0C: cond = !nan && (v1 < v2); break; // LT
+                        case 0x0D: cond = nan || (v1 < v2); break; // NGE
+                        case 0x0E: cond = !nan && (v1 <= v2); break; // LE
+                        case 0x0F: cond = nan || (v1 <= v2); break; // NGT
+                    }
+                    if (cond) this.fcr31 |= 0x00800000; else this.fcr31 &= ~0x00800000;
+                }
             } else if (fmt === 4) { // Word
                 const v1 = this.fprView.getInt32(fs * 8 + 4, false);
                 if (funct === 0x20) this.fprView.setFloat32(fd * 8 + 4, v1, false); // CVT.S.W
@@ -876,6 +911,9 @@ class CPU {
             this.gpr[rt] = BigInt.asIntN(32, this.cp0Registers[rd]);
         } else if (sub === 0x04) { // MTC0
             this.cp0Registers[rd] = this.gpr[rt];
+            if (rd === 11) { // Compare
+                this.cp0Registers[13] &= ~0x00008000n; // Clear IP7
+            }
         } else if (sub === 0x10) { // TLB / ERET
             const funct = instruction & 0x3F;
             if (funct === 0x18) { // ERET
@@ -885,6 +923,55 @@ class CPU {
             }
         }
         return false;
+    }
+
+    decompressMIO0(input, offset) {
+        const view = new DataView(input, offset);
+        const magic = view.getUint32(0, false);
+        if (magic !== 0x4D494F30) { // 'MIO0'
+            console.error("MIO0: Invalid magic");
+            return null;
+        }
+
+        const destSize = view.getUint32(4, false);
+        const compOffset = view.getUint32(8, false);
+        const uncompOffset = view.getUint32(12, false);
+
+        const output = new Uint8Array(destSize);
+        let outIdx = 0;
+        let bitIdx = 0;
+        let compIdx = compOffset;
+        let uncompIdx = uncompOffset;
+        let controlIdx = 16;
+
+        while (outIdx < destSize) {
+            const controlByte = view.getUint8(controlIdx + (bitIdx >> 3));
+            const bit = (controlByte >> (7 - (bitIdx & 7))) & 1;
+            bitIdx++;
+
+            if (bit) {
+                if (uncompIdx < view.byteLength) {
+                    output[outIdx++] = view.getUint8(uncompIdx++);
+                }
+            } else {
+                if (compIdx + 1 < view.byteLength) {
+                    const pair = view.getUint16(compIdx, false);
+                    compIdx += 2;
+                    const lookbackLen = (pair >> 12) + 3;
+                    const lookbackDist = (pair & 0xFFF) + 1;
+                    let lookbackIdx = outIdx - lookbackDist;
+                    for (let i = 0; i < lookbackLen; i++) {
+                        if (outIdx < destSize) {
+                            output[outIdx] = (lookbackIdx >= 0) ? output[lookbackIdx] : 0;
+                            outIdx++;
+                            lookbackIdx++;
+                        }
+                    }
+                }
+            }
+            if (bitIdx === 8 * (compOffset - 16)) break; // Safety
+        }
+        return output;
     }
 
     raiseException(code, pc, isDelaySlot) {
