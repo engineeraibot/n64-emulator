@@ -1,5 +1,5 @@
 class Memory {
-    constructor(rdramSize = 4 * 1024 * 1024) { // Default to 4MB of RDRAM
+    constructor(rdramSize = 8 * 1024 * 1024) {
         console.log("Memory Initialized");
         this.rdram = new ArrayBuffer(rdramSize);
         this.rdramView = new DataView(this.rdram);
