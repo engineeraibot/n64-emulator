@@ -25,7 +25,7 @@ class RCP {
             this.doSpDma(true);
         } else if (regIdx === 4) { // SP_STATUS_REG
             const oldStatus = this.mmu.spRegisters[4];
-            console.log(`SP_STATUS Write: 0x${value.toString(16)} (Old: 0x${oldStatus.toString(16)})`);
+            console.log(`SP_STATUS Write: 0x${value.toString(16)} (Old: 0x${oldStatus.toString(16)}) PC=0x${this.mmu.cpu.pc.toString(16)}`);
             if (value & 0x00000001) this.mmu.spRegisters[4] &= ~0x01; // Clear halt
             if (value & 0x00000002) this.mmu.spRegisters[4] |= 0x01;  // Set halt
             if (value & 0x00000004) this.mmu.spRegisters[4] &= ~0x02; // Clear broke
@@ -275,7 +275,12 @@ class RCP {
                         this.rspState.modelviewStack.pop();
                     }
                     break;
+                case 0xD7: // G_TEXTURE (Fast3D uses 0xD7 for some things?)
+                    break;
                 case 0x01: // G_VTX
+                    this.handleG_VTX(hi, lo);
+                    break;
+                case 0xB0: // G_VTX (Variant)
                     this.handleG_VTX(hi, lo);
                     break;
                 case 0xBF: // G_TRI1 (F3D)
@@ -289,6 +294,11 @@ class RCP {
                     break;
                 case 0xBD: // G_MOVEMEM
                     this.handleG_MOVEMEM(hi, lo);
+                    break;
+                case 0xB1: // G_TRI2
+                    this.handleG_TRI2(hi, lo);
+                    break;
+                case 0xB2: // G_MODIFYVTX
                     break;
                 case 0xDB: // G_SETSEGMENT
                     const seg = (hi >>> 2) & 0xF;
@@ -330,15 +340,23 @@ class RCP {
                 case 0xF7: // G_SETFILLCOLOR
                     this.rspState.fillColor = lo;
                     break;
-                case 0xB9: // G_SETOTHERMODE_L
+                case 0xE2: // G_SETOTHERMODE_L (Fast3D)
+                case 0xB9: // G_SETOTHERMODE_L (F3DEX)
                     this.rspState.otherModeLo = lo;
                     break;
-                case 0xBA: // G_SETOTHERMODE_H
+                case 0xE3: // G_SETOTHERMODE_H (Fast3D)
+                case 0xBA: // G_SETOTHERMODE_H (F3DEX)
                     this.rspState.otherModeHi = lo;
                     break;
                 case 0xBB: // G_TEXTURE
                     this.rspState.textureScaleS = (lo >>> 16) / 65536.0;
                     this.rspState.textureScaleT = (lo & 0xFFFF) / 65536.0;
+                    break;
+                case 0xED: // G_SETSCISSOR
+                    break;
+                case 0xFA: // G_SETPRIMCOLOR
+                    break;
+                case 0xFB: // G_SETENVCOLOR
                     break;
                 case 0xE7: // G_DPPIPESYNC
                 case 0xE6: // G_RDPLOADSYNC
@@ -449,8 +467,23 @@ class RCP {
     handleG_MOVEMEM(hi, lo) {
         const index = (hi >>> 16) & 0xFF;
         const addr = this.resolveAddress(lo);
+        const rdramView = new DataView(this.mmu.memory.rdram);
         if (index === 0x01) { // G_MV_VIEWPORT
-            // Stub for viewport
+            const vAddr = addr & 0x7FFFFF;
+            if (vAddr + 16 <= rdramView.byteLength) {
+                this.rspState.viewport = {
+                    scale: [
+                        rdramView.getInt16(vAddr, false) / 4.0,
+                        rdramView.getInt16(vAddr + 2, false) / 4.0,
+                        rdramView.getInt16(vAddr + 4, false) / 512.0
+                    ],
+                    trans: [
+                        rdramView.getInt16(vAddr + 8, false) / 4.0,
+                        rdramView.getInt16(vAddr + 10, false) / 4.0,
+                        rdramView.getInt16(vAddr + 12, false) / 512.0
+                    ]
+                };
+            }
         }
     }
 

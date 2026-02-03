@@ -187,6 +187,7 @@ class MMU {
             const regIdx = (physicalAddress - MMU.MI_REGS_START) >> 2;
             if (regIdx === 1) return 0x02020102; // MI_VERSION
             if (regIdx === 2) {
+                this.checkInternalEvents();
                 console.log(`MI_INTR Read: 0x${this.miRegisters[2].toString(16)}`);
             }
             return this.miRegisters[regIdx];
@@ -217,14 +218,6 @@ class MMU {
     }
     write32(address, value) {
         const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x0480001B) {
-             if (physicalAddress === 0x04600004) {
-                 const instr = this.cpu ? this.cpu.mmu.read32(Number(this.cpu.pc)) : 0;
-                 console.log(`MMU Write PI_CART: 0x${value.toString(16)} PC=0x${this.cpu ? this.cpu.pc.toString(16) : 'null'} Instr=0x${instr.toString(16).padStart(8, '0')}`);
-             } else {
-                 console.log(`MMU Write Reg: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
-             }
-        }
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write32(physicalAddress, value);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint32(physicalAddress - MMU.SP_DMEM_START, value, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint32(physicalAddress - MMU.SP_IMEM_START, value, false);
@@ -334,7 +327,7 @@ class MMU {
             let i = 0;
             while (i < 0x3F) {
                 if (this.pifRam[i] === 0xFF) { i++; continue; }
-                if (this.pifRam[i] === 0x00) break;
+                if (this.pifRam[i] === 0x00 || this.pifRam[i] === 0xFE) break;
 
                 const sendLen = this.pifRam[i] & 0x3F;
                 const recvLen = this.pifRam[i+1] & 0x3F;
@@ -385,21 +378,41 @@ class MMU {
         const cartAddr = this.piRegisters[1] & 0x1FFFFFFF;
         const length = ((cartToDram ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
-        const romOffset = (cartAddr < 0x10000000 ? cartAddr : cartAddr - 0x10000000) % (this.memory.rom ? this.memory.rom.byteLength : 0xFFFFFFFF);
-        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Offset=0x${romOffset.toString(16)} Len=0x${length.toString(16)}`);
+        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} Len=0x${length.toString(16)}`);
         this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
 
-        if (cartToDram) {
+        if (cartToDram && this.memory.rom) {
             const rdramView = new Uint8Array(this.memory.rdram);
-            console.log(`PI DMA: ROM 0x${cartAddr.toString(16)} -> RAM 0x${ramAddr.toString(16)} (len: 0x${length.toString(16)})`);
+            const romView = new Uint8Array(this.memory.rom);
+
+            let romOffset = 0;
+            if (cartAddr >= 0x10000000 && cartAddr <= 0x1FBFFFFF) {
+                romOffset = cartAddr - 0x10000000;
+            } else if (cartAddr >= 0x01000000 && cartAddr <= 0x01FFFFFF) {
+                // Cartridge Domain 2 Address 1
+                romOffset = cartAddr - 0x01000000;
+            } else if (cartAddr >= 0x05000000 && cartAddr <= 0x05FFFFFF) {
+                // Cartridge Domain 2 Address 2 (RCP)
+                romOffset = cartAddr - 0x05000000;
+            } else if (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF) {
+                // Cartridge Domain 2 Address 2 (SRAM/Flash)
+                romOffset = cartAddr - 0x08000000;
+            } else {
+                romOffset = cartAddr % romView.length;
+            }
+
             for (let i = 0; i < length; i++) {
-                if (ramAddr + i < rdramView.length) {
-                    rdramView[ramAddr + i] = this.memory.readRom8(romOffset + i);
+                const dst = ramAddr + i;
+                const src = (romOffset + i) % romView.length;
+                if (dst < rdramView.length) {
+                    rdramView[dst] = romView[src];
                 }
             }
+            console.log(`PI DMA Completed: copied ${length} bytes (with wrapping) to RAM 0x${ramAddr.toString(16)}`);
         }
 
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 100000;
+        // Simulate DMA delay
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + Math.floor(length / 4);
     }
 
     doSiDma(isToPif) {
