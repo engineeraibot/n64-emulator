@@ -94,6 +94,7 @@ class RCP {
         let start = this.mmu.dpcRegisters[0] & 0xFFFFFF;
         let end = this.mmu.dpcRegisters[1] & 0xFFFFFF;
         if (end <= start) return;
+        console.log(`RDP Commands: 0x${start.toString(16)} to 0x${end.toString(16)}`);
 
         const rdramView = new DataView(this.mmu.memory.rdram);
         for (let addr = start; addr < end; addr += 8) {
@@ -140,18 +141,302 @@ class RCP {
         // OSTask structure is usually at SP_DMEM 0xFC0
         const taskPtr = 0xFC0;
         const type = this.mmu.spDmemView.getUint32(taskPtr + 0x00, false);
+        if (this.lastTaskType !== type) {
+            console.log(`RSP Task: Type=${type}`);
+            this.lastTaskType = type;
+        }
         const dataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x30, false) & 0xFFFFFF;
         const dataSize = this.mmu.spDmemView.getUint32(taskPtr + 0x34, false);
         const yieldDataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x38, false) & 0xFFFFFF;
 
         if (type === 4) { // Decompression Task HLE
-            const input = new Uint8Array(this.mmu.memory.rdram);
             const output = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr);
             if (output) {
                 const rdramView = new Uint8Array(this.mmu.memory.rdram);
                 rdramView.set(output, yieldDataPtr);
                 console.log(`HLE: Decompressed MIO0 at 0x${dataPtr.toString(16)} to 0x${yieldDataPtr.toString(16)}`);
             }
+        } else if (type === 1) { // Graphics Task HLE
+            this.processDisplayList(dataPtr);
         }
+    }
+
+    processDisplayList(addr) {
+        this.rspState = {
+            segments: new Uint32Array(16),
+            vertices: new Array(32).fill(0).map(() => ({ x: 0, y: 0, z: 0, w: 1, r: 0, g: 0, b: 0, a: 0, s: 0, t: 0 })),
+            depthImage: 0,
+            colorImage: 0,
+            textureImage: 0,
+            tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0 })),
+            combine: { hi: 0, lo: 0 },
+            otherModeHi: 0,
+            otherModeLo: 0,
+            fillColor: 0
+        };
+
+        this.executeDisplayList(addr);
+    }
+
+    executeDisplayList(addr) {
+        const rdramView = new DataView(this.mmu.memory.rdram);
+        let pc = addr;
+        let depth = 0;
+        const stack = [];
+
+        while (pc < 0x800000) {
+            const hi = rdramView.getUint32(pc, false);
+            const lo = rdramView.getUint32(pc + 4, false);
+            pc += 8;
+
+            const cmd = (hi >>> 24) & 0xFF;
+            switch (cmd) {
+                case 0xDE: // G_DL
+                    const branch = (hi >>> 16) & 0xFF;
+                    const nextDl = this.resolveAddress(lo);
+                    if (branch === 0) { // Branch
+                        pc = nextDl;
+                    } else { // Call
+                        if (depth < 16) {
+                            stack.push(pc);
+                            depth++;
+                            pc = nextDl;
+                        }
+                    }
+                    break;
+                case 0xDF: // G_ENDDL
+                    if (depth > 0) {
+                        depth--;
+                        pc = stack.pop();
+                    } else {
+                        return;
+                    }
+                    break;
+                case 0x01: // G_VTX
+                    this.handleG_VTX(hi, lo);
+                    break;
+                case 0xBF: // G_TRI1 (F3D)
+                    this.handleG_TRI1(hi, lo);
+                    break;
+                case 0xB1: // G_TRI2 (F3D)
+                    this.handleG_TRI2(hi, lo);
+                    break;
+                case 0xBC: // G_MOVEWORD
+                    this.handleG_MOVEWORD(hi, lo);
+                    break;
+                case 0xBD: // G_MOVEMEM
+                    this.handleG_MOVEMEM(hi, lo);
+                    break;
+                case 0xDB: // G_SETSEGMENT
+                    const seg = (hi >>> 2) & 0xF;
+                    this.rspState.segments[seg] = lo & 0xFFFFFF;
+                    break;
+                case 0xFD: // G_SETTIMG
+                    this.rspState.textureImage = this.resolveAddress(lo);
+                    break;
+                case 0xFF: // G_SETCIMG
+                    this.rspState.colorImage = this.resolveAddress(lo);
+                    break;
+                case 0xFE: // G_SETZIMG
+                    this.rspState.depthImage = this.resolveAddress(lo);
+                    break;
+                case 0xF5: // G_SETTILE
+                    this.handleG_SETTILE(hi, lo);
+                    break;
+                case 0xF2: // G_SETTILESIZE
+                    this.handleG_SETTILESIZE(hi, lo);
+                    break;
+                case 0xF4: // G_LOADTILE
+                    // Skeleton
+                    break;
+                case 0xF3: // G_LOADBLOCK
+                    // Skeleton
+                    break;
+                case 0xFC: // G_SETCOMBINE
+                    this.rspState.combine.hi = hi & 0xFFFFFF;
+                    this.rspState.combine.lo = lo;
+                    break;
+                case 0xF6: // G_FILLRECT
+                    this.handleG_FILLRECT(hi, lo);
+                    break;
+                case 0xF7: // G_SETFILLCOLOR
+                    this.rspState.fillColor = lo;
+                    break;
+                case 0xB9: // G_SETOTHERMODE_L
+                    this.rspState.otherModeLo = lo;
+                    break;
+                case 0xBA: // G_SETOTHERMODE_H
+                    this.rspState.otherModeHi = lo;
+                    break;
+                case 0xBB: // G_TEXTURE
+                    // lo contains scale S and T
+                    break;
+                case 0xE7: // G_DPPIPESYNC
+                    break;
+            }
+        }
+    }
+
+    resolveAddress(addr) {
+        const seg = (addr >>> 24) & 0xF;
+        return this.rspState.segments[seg] + (addr & 0xFFFFFF);
+    }
+
+    handleG_VTX(hi, lo) {
+        const num = (hi >>> 12) & 0xFF;
+        const dest = (hi & 0xFF) / 2; // Index in vertex buffer
+        const addr = this.resolveAddress(lo);
+        const rdramView = new DataView(this.mmu.memory.rdram);
+
+        for (let i = 0; i < num; i++) {
+            const vAddr = addr + i * 16;
+            const x = rdramView.getInt16(vAddr, false);
+            const y = rdramView.getInt16(vAddr + 2, false);
+            const z = rdramView.getInt16(vAddr + 4, false);
+            // Ignore flag at +6
+            const s = rdramView.getInt16(vAddr + 8, false);
+            const t = rdramView.getInt16(vAddr + 10, false);
+            const r = rdramView.getUint8(vAddr + 12);
+            const g = rdramView.getUint8(vAddr + 13);
+            const b = rdramView.getUint8(vAddr + 14);
+            const a = rdramView.getUint8(vAddr + 15);
+
+            this.rspState.vertices[dest + i] = { x, y, z, r, g, b, a, s, t };
+        }
+    }
+
+    handleG_TRI1(hi, lo) {
+        const v1idx = (lo >>> 16) & 0xFF;
+        const v2idx = (lo >>> 8) & 0xFF;
+        const v3idx = (lo >>> 0) & 0xFF;
+
+        const v1 = this.rspState.vertices[v1idx / 2];
+        const v2 = this.rspState.vertices[v2idx / 2];
+        const v3 = this.rspState.vertices[v3idx / 2];
+
+        if (v1 && v2 && v3) {
+            this.drawTriangle(v1, v2, v3);
+        }
+    }
+
+    handleG_TRI2(hi, lo) {
+        const v1idx = (hi >>> 16) & 0xFF;
+        const v2idx = (hi >>> 8) & 0xFF;
+        const v3idx = (hi >>> 0) & 0xFF;
+        const v4idx = (lo >>> 16) & 0xFF;
+        const v5idx = (lo >>> 8) & 0xFF;
+        const v6idx = (lo >>> 0) & 0xFF;
+
+        const v1 = this.rspState.vertices[v1idx / 2];
+        const v2 = this.rspState.vertices[v2idx / 2];
+        const v3 = this.rspState.vertices[v3idx / 2];
+        if (v1 && v2 && v3) this.drawTriangle(v1, v2, v3);
+
+        const v4 = this.rspState.vertices[v4idx / 2];
+        const v5 = this.rspState.vertices[v5idx / 2];
+        const v6 = this.rspState.vertices[v6idx / 2];
+        if (v4 && v5 && v6) this.drawTriangle(v4, v5, v6);
+    }
+
+    handleG_MOVEWORD(hi, lo) {
+        // Skeletons for state updates
+    }
+
+    handleG_MOVEMEM(hi, lo) {
+        // Skeletons for matrix/light updates
+    }
+
+    handleG_SETTILE(hi, lo) {
+        const tile = lo >>> 24;
+        if (tile < 8) {
+            this.rspState.tiles[tile].format = (hi >>> 21) & 0x7;
+            this.rspState.tiles[tile].size = (hi >>> 19) & 0x3;
+            this.rspState.tiles[tile].line = (hi >>> 9) & 0x1FF;
+            this.rspState.tiles[tile].tmem = hi & 0x1FF;
+            this.rspState.tiles[tile].palette = (lo >>> 20) & 0xF;
+        }
+    }
+
+    handleG_SETTILESIZE(hi, lo) {
+        const tile = lo >>> 24;
+        if (tile < 8) {
+            this.rspState.tiles[tile].uls = (hi >>> 12) & 0xFFF;
+            this.rspState.tiles[tile].ult = hi & 0xFFF;
+            this.rspState.tiles[tile].lrs = (lo >>> 12) & 0xFFF;
+            this.rspState.tiles[tile].lrt = lo & 0xFFF;
+        }
+    }
+
+    handleG_FILLRECT(hi, lo) {
+        const x1 = (hi >>> 12) & 0xFFF;
+        const y1 = (hi >>> 0) & 0xFFF;
+        const x2 = (lo >>> 12) & 0xFFF;
+        const y2 = (lo >>> 0) & 0xFFF;
+
+        const addr = this.rspState.colorImage;
+        if (!addr) return;
+
+        const rdramView = new DataView(this.mmu.memory.rdram);
+        const color = (this.rspState.fillColor >>> 16) & 0xFFFF;
+
+        const startX = Math.floor(x1 / 4);
+        const startY = Math.floor(y1 / 4);
+        const endX = Math.floor(x2 / 4);
+        const endY = Math.floor(y2 / 4);
+
+        for (let y = startY; y < endY; y++) {
+            for (let x = startX; x < endX; x++) {
+                const pAddr = addr + (y * 320 + x) * 2;
+                if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
+                    rdramView.setUint16(pAddr, color, false);
+                }
+            }
+        }
+    }
+
+    drawTriangle(v1, v2, v3) {
+        const addr = this.rspState.colorImage;
+        if (!addr) return;
+
+        const x1 = v1.x, y1 = v1.y;
+        const x2 = v2.x, y2 = v2.y;
+        const x3 = v3.x, y3 = v3.y;
+
+        const minX = Math.floor(Math.min(x1, x2, x3));
+        const maxX = Math.ceil(Math.max(x1, x2, x3));
+        const minY = Math.floor(Math.min(y1, y2, y3));
+        const maxY = Math.ceil(Math.max(y1, y2, y3));
+
+        const rdramView = new DataView(this.mmu.memory.rdram);
+
+        for (let y = minY; y <= maxY; y++) {
+            if (y < 0 || y >= 240) continue;
+            for (let x = minX; x <= maxX; x++) {
+                if (x < 0 || x >= 320) continue;
+                const weights = this.getBarycentricWeights(x, y, x1, y1, x2, y2, x3, y3);
+                if (weights) {
+                    const r = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
+                    const g = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
+                    const b = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+
+                    const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
+
+                    const pAddr = addr + (y * 320 + x) * 2;
+                    if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
+                        rdramView.setUint16(pAddr, color16, false);
+                    }
+                }
+            }
+        }
+    }
+
+    getBarycentricWeights(px, py, x1, y1, x2, y2, x3, y3) {
+        const area = 0.5 * (-y2 * x3 + y1 * (-x2 + x3) + x1 * (y2 - y3) + x2 * y3);
+        if (Math.abs(area) < 0.0001) return null;
+        const s = 1 / (2 * area) * (y1 * x3 - x1 * y3 + (y3 - y1) * px + (x1 - x3) * py);
+        const t = 1 / (2 * area) * (x1 * y2 - y1 * x2 + (y1 - y2) * px + (x2 - x1) * py);
+        const u = 1 - s - t;
+        if (s >= 0 && t >= 0 && u >= 0) return { s, t, u };
+        return null;
     }
 }

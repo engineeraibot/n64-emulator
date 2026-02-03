@@ -106,6 +106,7 @@ class MMU {
         else if (physicalAddress >= MMU.AI_REGS_START && physicalAddress <= MMU.AI_REGS_START + 0x17) return this.aiRegisters[(physicalAddress - MMU.AI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.RI_REGS_START && physicalAddress <= MMU.RI_REGS_START + 0x1F) return this.riRegisters[(physicalAddress - MMU.RI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint32(physicalAddress - MMU.PIF_RAM_START, false);
+
         return 0;
     }
     write32(address, value) {
@@ -114,7 +115,11 @@ class MMU {
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint32(physicalAddress - MMU.SP_DMEM_START, value, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint32(physicalAddress - MMU.SP_IMEM_START, value, false);
         else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
-            this.viRegisters[(physicalAddress - MMU.VI_REGS_START) >> 2] = value;
+            const regIdx = (physicalAddress - MMU.VI_REGS_START) >> 2;
+            this.viRegisters[regIdx] = value;
+            if (regIdx === 4) { // VI_CURRENT_REG
+                this.miRegisters[2] &= ~0x08; // Clear VI Interrupt
+            }
         }
         else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) this.handlePiWrite(physicalAddress, value);
         else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) this.handleMiWrite(physicalAddress, value);
@@ -182,8 +187,8 @@ class MMU {
                 const recvLen = this.pifRam[i+1] & 0x3F;
                 const cmd = this.pifRam[i+2];
 
-                if (cmd === 0x01 || cmd === 0xFF) { // Read Controller or Reset/Info
-                    if (cmd === 0xFF) { // Info
+                if (cmd === 0x01 || cmd === 0xFF || cmd === 0x00) { // Read Controller or Info
+                    if (cmd === 0x00 || cmd === 0xFF) { // Info
                         this.pifRam[i+2] = 0x05; this.pifRam[i+3] = 0x00; this.pifRam[i+4] = 0x01;
                     } else { // Read
                         this.pifRam[i+2] = (this.buttons >> 8) & 0xFF;
@@ -191,6 +196,15 @@ class MMU {
                         this.pifRam[i+4] = this.stickX & 0xFF;
                         this.pifRam[i+5] = this.stickY & 0xFF;
                     }
+                } else if (cmd === 0x04 || cmd === 0x05) { // EEPROM Read/Write
+                    // Return 0 (Success) for both
+                    for (let j = 0; j < recvLen; j++) this.pifRam[i+2+j] = 0;
+                } else if (cmd === 0x02 || cmd === 0x03) { // Write/Read Status
+                    for (let j = 0; j < recvLen; j++) this.pifRam[i+2+j] = 0;
+                } else {
+                    // Unknown command, skip it to avoid getting stuck
+                    i += 1;
+                    continue;
                 }
                 i += 2 + sendLen + recvLen;
             }
