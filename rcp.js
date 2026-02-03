@@ -210,6 +210,7 @@ class RCP {
             vertices: new Array(32).fill(0).map(() => ({ x: 0, y: 0, z: 0, w: 1, r: 0, g: 0, b: 0, a: 0, s: 0, t: 0 })),
             modelviewStack: [this.createIdentityMatrix()],
             projectionMatrix: this.createIdentityMatrix(),
+            viewport: null,
             depthImage: 0,
             colorImage: 0,
             colorImageWidth: 320,
@@ -223,7 +224,10 @@ class RCP {
             otherModeLo: 0,
             fillColor: 0,
             textureScaleS: 1.0,
-            textureScaleT: 1.0
+            textureScaleT: 1.0,
+            zBuffer: null,
+            zBufferWidth: 0,
+            zBufferHeight: 0
         };
         this.warnedCommands = new Set();
         this.executeDisplayList(addr);
@@ -381,12 +385,19 @@ class RCP {
             const tz = x * mvp[2] + y * mvp[6] + z * mvp[10] + mvp[14];
             const tw = x * mvp[3] + y * mvp[7] + z * mvp[11] + mvp[15];
 
-            // Simple Viewport Transformation (assuming 320x240)
             let screenX = 160;
             let screenY = 120;
             if (Math.abs(tw) > 0.0001) {
-                screenX = (tx / tw) * 160 + 160;
-                screenY = -(ty / tw) * 120 + 120;
+                const ndcX = tx / tw;
+                const ndcY = ty / tw;
+                if (this.rspState.viewport) {
+                    const vp = this.rspState.viewport;
+                    screenX = (ndcX * vp.scaleX + vp.transX) / 4.0;
+                    screenY = (-ndcY * vp.scaleY + vp.transY) / 4.0;
+                } else {
+                    screenX = ndcX * 160 + 160;
+                    screenY = -ndcY * 120 + 120;
+                }
             }
 
             const s = rdramView.getInt16(vAddr + 8, false);
@@ -445,8 +456,34 @@ class RCP {
     handleG_MOVEMEM(hi, lo) {
         const index = (hi >>> 16) & 0xFF;
         const addr = this.resolveAddress(lo);
-        if (index === 0x01) { // G_MV_VIEWPORT
-            // Stub for viewport
+        if (index === 0x01 || index === 0x08) { // G_MV_VIEWPORT (ucode variants)
+            const rdramView = new DataView(this.mmu.memory.rdram);
+            const base = addr & 0x7FFFFF;
+            const scaleX = rdramView.getInt16(base, false);
+            const scaleY = rdramView.getInt16(base + 2, false);
+            const scaleZ = rdramView.getInt16(base + 4, false);
+            const transX = rdramView.getInt16(base + 8, false);
+            const transY = rdramView.getInt16(base + 10, false);
+            const transZ = rdramView.getInt16(base + 12, false);
+            this.rspState.viewport = {
+                scaleX,
+                scaleY,
+                scaleZ,
+                transX,
+                transY,
+                transZ
+            };
+        }
+    }
+
+    ensureZBuffer() {
+        const width = this.rspState.colorImageWidth;
+        const height = 240;
+        if (!this.rspState.zBuffer || this.rspState.zBufferWidth !== width || this.rspState.zBufferHeight !== height) {
+            this.rspState.zBuffer = new Float32Array(width * height);
+            this.rspState.zBuffer.fill(Infinity);
+            this.rspState.zBufferWidth = width;
+            this.rspState.zBufferHeight = height;
         }
     }
 
@@ -586,6 +623,8 @@ class RCP {
         const rdramView = new DataView(this.mmu.memory.rdram);
         const tile = this.rspState.tiles[0]; // Simplified: assume tile 0
         const width = this.rspState.colorImageWidth;
+        const useZ = this.rspState.depthImage !== 0;
+        if (useZ) this.ensureZBuffer();
 
         for (let y = minY; y <= maxY; y++) {
             if (y < 0 || y >= 240) continue;
@@ -598,6 +637,7 @@ class RCP {
                     // Texture coordinates
                     const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
                     const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
+                    const z = v1.z * weights.s + v2.z * weights.t + v3.z * weights.u;
 
                     // Simplified texture sampling (Point sampling, 16-bit RGBA)
                     const texS = Math.floor(s / 32.0);
@@ -620,6 +660,14 @@ class RCP {
                         r = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
                         g = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
                         b = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+                    }
+
+                    if (useZ) {
+                        const zIdx = y * width + x;
+                        if (z >= this.rspState.zBuffer[zIdx]) {
+                            continue;
+                        }
+                        this.rspState.zBuffer[zIdx] = z;
                     }
 
                     const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
