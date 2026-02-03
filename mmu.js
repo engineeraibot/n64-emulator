@@ -132,7 +132,7 @@ class MMU {
             if (this.rcp) this.rcp.handleDpcWrite(physicalAddress, value);
             else this.dpcRegisters[(physicalAddress - MMU.DPC_REGS_START) >> 2] = value;
         }
-        else if (physicalAddress >= MMU.AI_REGS_START && physicalAddress <= MMU.AI_REGS_START + 0x17) this.aiRegisters[(physicalAddress - MMU.AI_REGS_START) >> 2] = value;
+        else if (physicalAddress >= MMU.AI_REGS_START && physicalAddress <= MMU.AI_REGS_START + 0x17) this.handleAiWrite(physicalAddress, value);
         else if (physicalAddress >= MMU.RI_REGS_START && physicalAddress <= MMU.RI_REGS_START + 0x1F) this.riRegisters[(physicalAddress - MMU.RI_REGS_START) >> 2] = value;
         else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
             this.pifRamView.setUint32(physicalAddress - MMU.PIF_RAM_START, value, false);
@@ -173,6 +173,17 @@ class MMU {
         const regIdx = (address - MMU.SI_REGS_START) >> 2;
         this.siRegisters[regIdx] = value;
         if (regIdx === 1 || regIdx === 4) this.doSiDma(regIdx === 4);
+    }
+
+    handleAiWrite(address, value) {
+        const regIdx = (address - MMU.AI_REGS_START) >> 2;
+        this.aiRegisters[regIdx] = value;
+        if (regIdx === 1) { // AI_LEN_REG
+            // Simulate DMA completion
+            this.miRegisters[2] |= 0x04; // AI Interrupt
+        } else if (regIdx === 2) { // AI_CONTROL_REG
+            if (value & 0x01) { /* DMA Enable */ }
+        }
     }
 
     handlePifCommand() {
