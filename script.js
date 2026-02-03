@@ -70,7 +70,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let lastViOrigin = -1;
     function updateDisplay() {
+        mmu.viRegisters[4] = mmu.viRegisters[3];
         mmu.miRegisters[2] |= 0x08; // VI Interrupt
+        mmu.updateInterrupts();
 
         const status = mmu.viRegisters[0];
         const origin = mmu.viRegisters[1] & 0x00FFFFFF;

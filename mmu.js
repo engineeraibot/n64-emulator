@@ -30,6 +30,10 @@ class MMU {
         this.memory = memory;
         this.rcp = null; // Set after RCP is created
         this.cpu = null; // Set after CPU is created
+        this.piBusyUntil = 0;
+        this.siBusyUntil = 0;
+        this.aiBusyUntil = 0;
+        this.viNextInterrupt = 0;
         this.viRegisters = new Uint32Array(14);
         this.miRegisters = new Uint32Array(4);
         this.piRegisters = new Uint32Array(13);
@@ -56,6 +60,48 @@ class MMU {
         this.stickY = y;
     }
 
+    updateInterrupts() {
+        if (this.cpu) {
+            const mi_intr = this.miRegisters[2] & this.miRegisters[3];
+            if (mi_intr) this.cpu.cp0Registers[13] |= 0x0400n;
+            else this.cpu.cp0Registers[13] &= ~0x0400n;
+        }
+    }
+
+    checkInternalEvents() {
+        const now = this.cpu ? this.cpu.instructionCount : 0;
+        let changed = false;
+        if (this.piBusyUntil > 0 && now >= this.piBusyUntil) {
+            this.piRegisters[4] &= ~0x03;
+            this.miRegisters[2] |= 0x10; // Trigger interrupt
+            this.piBusyUntil = 0;
+            console.log(`PI DMA Completed (Event) MI_INTR=0x${this.miRegisters[2].toString(16)}`);
+            changed = true;
+        }
+        if (this.siBusyUntil > 0 && now >= this.siBusyUntil) {
+            this.siRegisters[6] &= ~0x01; // Not busy
+            this.miRegisters[2] |= 0x02;  // SI Interrupt
+            this.siBusyUntil = 0;
+            console.log(`SI DMA Completed (Event) MI_INTR=0x${this.miRegisters[2].toString(16)}`);
+            changed = true;
+        }
+        if (this.aiBusyUntil > 0 && now >= this.aiBusyUntil) {
+            this.miRegisters[2] |= 0x04; // AI Interrupt
+            this.aiBusyUntil = 0;
+            console.log(`AI DMA Completed (Event) MI_INTR=0x${this.miRegisters[2].toString(16)}`);
+            changed = true;
+        }
+        if (now >= this.viNextInterrupt) {
+            if (!(this.miRegisters[2] & 0x08)) {
+                this.miRegisters[2] |= 0x08; // VI Interrupt
+                // console.log(`VI Interrupt Triggered at ${now}`);
+                changed = true;
+            }
+            this.viNextInterrupt = now + 5000000; // Slower for now to avoid storm
+        }
+        if (changed) this.updateInterrupts();
+    }
+
     read8(address) {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read8(physicalAddress);
@@ -69,6 +115,17 @@ class MMU {
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write8(physicalAddress, value);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint8(physicalAddress - MMU.SP_DMEM_START, value);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint8(physicalAddress - MMU.SP_IMEM_START, value);
+        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
+            this.pifRam[physicalAddress - MMU.PIF_RAM_START] = value;
+            if (physicalAddress === MMU.PIF_RAM_END) this.handlePifCommand();
+        }
+        else {
+            // Basic support for 8-bit register writes if needed
+            const val32 = this.read32(address & ~3);
+            const shift = (3 - (physicalAddress & 3)) * 8;
+            const mask = ~(0xFF << shift);
+            this.write32(address & ~3, (val32 & mask) | (value << shift));
+        }
     }
     read16(address) {
         const physicalAddress = this.translateAddress(address);
@@ -83,28 +140,76 @@ class MMU {
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write16(physicalAddress, value);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint16(physicalAddress - MMU.SP_DMEM_START, value, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint16(physicalAddress - MMU.SP_IMEM_START, value, false);
+        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
+            this.pifRamView.setUint16(physicalAddress - MMU.PIF_RAM_START, value, false);
+            if (physicalAddress >= MMU.PIF_RAM_END - 1) this.handlePifCommand();
+        }
+        else {
+            // Basic support for 16-bit register writes
+            const val32 = this.read32(address & ~3);
+            if (physicalAddress & 2) {
+                this.write32(address & ~3, (val32 & 0xFFFF0000) | (value & 0xFFFF));
+            } else {
+                this.write32(address & ~3, (val32 & 0x0000FFFF) | ((value & 0xFFFF) << 16));
+            }
+        }
     }
     read32(address) {
         const physicalAddress = this.translateAddress(address);
+        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x0480001B) {
+            // Log hardware register reads, but not too frequently
+            if ((this.cpu.instructionCount & 0xFFFF) === 0) {
+                 // console.log(`MMU Read Reg: 0x${physicalAddress.toString(16)}`);
+            }
+        }
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read32(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom32(physicalAddress - MMU.ROM_START);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint32(physicalAddress - MMU.SP_DMEM_START, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint32(physicalAddress - MMU.SP_IMEM_START, false);
-        else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) return this.viRegisters[(physicalAddress - MMU.VI_REGS_START) >> 2];
+        else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
+            const regIdx = (physicalAddress - MMU.VI_REGS_START) >> 2;
+            if (regIdx === 4) { // VI_CURRENT_REG
+                return (Math.floor((this.cpu ? this.cpu.instructionCount : 0) / 2000) % 512);
+            }
+            return this.viRegisters[regIdx];
+        }
         else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) {
             const regIdx = (physicalAddress - MMU.PI_REGS_START) >> 2;
-            if (regIdx === 4) return 0; // PI_STATUS: not busy
+            if (regIdx === 4) {
+                this.checkInternalEvents();
+                let status = this.piRegisters[4];
+                if (this.miRegisters[2] & 0x10) status |= 0x08; // Interrupt pending bit
+                return status;
+            }
             return this.piRegisters[regIdx];
         }
         else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) {
             const regIdx = (physicalAddress - MMU.MI_REGS_START) >> 2;
             if (regIdx === 1) return 0x02020102; // MI_VERSION
+            if (regIdx === 2) {
+                console.log(`MI_INTR Read: 0x${this.miRegisters[2].toString(16)}`);
+            }
             return this.miRegisters[regIdx];
         }
         else if (physicalAddress >= MMU.SI_REGS_START && physicalAddress <= MMU.SI_REGS_END) return this.siRegisters[(physicalAddress - MMU.SI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.SP_REGS_START && physicalAddress <= MMU.SP_REGS_END) return this.spRegisters[(physicalAddress - MMU.SP_REGS_START) >> 2];
         else if (physicalAddress >= MMU.DPC_REGS_START && physicalAddress <= MMU.DPC_REGS_END) return this.dpcRegisters[(physicalAddress - MMU.DPC_REGS_START) >> 2];
-        else if (physicalAddress >= MMU.AI_REGS_START && physicalAddress <= MMU.AI_REGS_START + 0x17) return this.aiRegisters[(physicalAddress - MMU.AI_REGS_START) >> 2];
+        else if (physicalAddress >= MMU.AI_REGS_START && physicalAddress <= MMU.AI_REGS_START + 0x17) {
+            const regIdx = (physicalAddress - MMU.AI_REGS_START) >> 2;
+            if (regIdx === 1) { // AI_LEN_REG
+                const now = this.cpu ? this.cpu.instructionCount : 0;
+                if (this.aiBusyUntil > now) return Number(this.aiBusyUntil - now);
+                return 0;
+            }
+            if (regIdx === 3) { // AI_STATUS_REG
+                let status = 0;
+                if (this.aiBusyUntil > (this.cpu ? this.cpu.instructionCount : 0)) {
+                    status |= 0x40000000; // AI Busy (bit 30)
+                }
+                return status;
+            }
+            return this.aiRegisters[regIdx];
+        }
         else if (physicalAddress >= MMU.RI_REGS_START && physicalAddress <= MMU.RI_REGS_START + 0x1F) return this.riRegisters[(physicalAddress - MMU.RI_REGS_START) >> 2];
         else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint32(physicalAddress - MMU.PIF_RAM_START, false);
 
@@ -112,14 +217,27 @@ class MMU {
     }
     write32(address, value) {
         const physicalAddress = this.translateAddress(address);
+        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x0480001B) {
+             if (physicalAddress === 0x04600004) {
+                 const instr = this.cpu ? this.cpu.mmu.read32(Number(this.cpu.pc)) : 0;
+                 console.log(`MMU Write PI_CART: 0x${value.toString(16)} PC=0x${this.cpu ? this.cpu.pc.toString(16) : 'null'} Instr=0x${instr.toString(16).padStart(8, '0')}`);
+             } else {
+                 console.log(`MMU Write Reg: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
+             }
+        }
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write32(physicalAddress, value);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint32(physicalAddress - MMU.SP_DMEM_START, value, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint32(physicalAddress - MMU.SP_IMEM_START, value, false);
         else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
             const regIdx = (physicalAddress - MMU.VI_REGS_START) >> 2;
+            console.log(`VI Write: Reg ${regIdx} = 0x${value.toString(16)}`);
             this.viRegisters[regIdx] = value;
             if (regIdx === 4) { // VI_CURRENT_REG
-                this.miRegisters[2] &= ~0x08; // Clear VI Interrupt
+                if (this.miRegisters[2] & 0x08) {
+                    console.log("VI Interrupt Cleared");
+                    this.miRegisters[2] &= ~0x08; // Clear VI Interrupt
+                    this.updateInterrupts();
+                }
             }
         }
         else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) this.handlePiWrite(physicalAddress, value);
@@ -156,13 +274,19 @@ class MMU {
         } else {
             this.miRegisters[regIdx] = value;
         }
+        this.updateInterrupts();
     }
 
     handlePiWrite(address, value) {
         const regIdx = (address - MMU.PI_REGS_START) >> 2;
+        console.log(`PI Write: Reg ${regIdx} = 0x${value.toString(16)}`);
         if (regIdx === 4) { // PI_STATUS_REG
             if (value & 0x01) { /* reset controller */ }
-            if (value & 0x02) this.miRegisters[2] &= ~0x10; // Clear PI interrupt
+            if (value & 0x02) {
+                console.log("PI Interrupt Cleared");
+                this.miRegisters[2] &= ~0x10; // Clear PI interrupt
+            }
+            this.updateInterrupts();
         } else {
             this.piRegisters[regIdx] = value;
             if (regIdx === 2) this.doPiDma(false); // DRAM -> Cart
@@ -172,22 +296,39 @@ class MMU {
 
     handleSiWrite(address, value) {
         const regIdx = (address - MMU.SI_REGS_START) >> 2;
+        if (regIdx === 6) { // SI_STATUS_REG
+             this.miRegisters[2] &= ~0x02; // Clear SI interrupt
+             this.updateInterrupts();
+             return;
+        }
         this.siRegisters[regIdx] = value;
         if (regIdx === 1 || regIdx === 4) this.doSiDma(regIdx === 4);
     }
 
     handleAiWrite(address, value) {
         const regIdx = (address - MMU.AI_REGS_START) >> 2;
+        if (regIdx === 3) { // AI_STATUS_REG
+            this.miRegisters[2] &= ~0x04; // Clear AI Interrupt
+            this.updateInterrupts();
+            return;
+        }
         this.aiRegisters[regIdx] = value;
         if (regIdx === 1) { // AI_LEN_REG
-            // Simulate DMA completion
-            this.miRegisters[2] |= 0x04; // AI Interrupt
+            // Simulate DMA completion with a delay
+            this.aiBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 50000;
         } else if (regIdx === 2) { // AI_CONTROL_REG
             if (value & 0x01) { /* DMA Enable */ }
         }
     }
 
     handlePifCommand() {
+        console.log(`PIF Command Triggered: 0x${this.pifRam[0x3f].toString(16)}`);
+        if (this.pifRam[0x3F] === 0x08) {
+            console.log("PIF RAM: " + Array.from(this.pifRam.subarray(0, 16)).map(x => x.toString(16)).join(' '));
+            // Some games use 0x08 for PIF status check
+            this.pifRam[0x3F] = 0x00;
+            return;
+        }
         if (this.pifRam[0x3F] === 0x01) {
             // Basic HLE PIF command handling
             let i = 0;
@@ -202,6 +343,7 @@ class MMU {
                 const resIdx = i + 2 + sendLen;
                 if (resIdx >= 64) break;
 
+                console.log(`PIF CMD: 0x${cmd.toString(16)} send=${sendLen} recv=${recvLen}`);
                 if (cmd === 0x01 || cmd === 0xFF || cmd === 0x00) { // Read Controller or Info
                     if (cmd === 0x00 || cmd === 0xFF) { // Info
                         if (resIdx < 64) this.pifRam[resIdx] = 0x05;
@@ -230,8 +372,7 @@ class MMU {
                     }
                 } else {
                     // Unknown command, skip it to avoid getting stuck
-                    i += 1;
-                    continue;
+                    console.warn(`Unknown PIF Joybus command: 0x${cmd.toString(16)}`);
                 }
                 i += 2 + sendLen + recvLen;
             }
@@ -244,9 +385,12 @@ class MMU {
         const cartAddr = this.piRegisters[1] & 0x1FFFFFFF;
         const length = ((cartToDram ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
+        const romOffset = (cartAddr < 0x10000000 ? cartAddr : cartAddr - 0x10000000) % (this.memory.rom ? this.memory.rom.byteLength : 0xFFFFFFFF);
+        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Offset=0x${romOffset.toString(16)} Len=0x${length.toString(16)}`);
+        this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
+
         if (cartToDram) {
             const rdramView = new Uint8Array(this.memory.rdram);
-            const romOffset = cartAddr - 0x10000000;
             console.log(`PI DMA: ROM 0x${cartAddr.toString(16)} -> RAM 0x${ramAddr.toString(16)} (len: 0x${length.toString(16)})`);
             for (let i = 0; i < length; i++) {
                 if (ramAddr + i < rdramView.length) {
@@ -254,13 +398,15 @@ class MMU {
                 }
             }
         }
-        this.piRegisters[4] &= ~0x01; // Not busy
-        this.miRegisters[2] |= 0x10;  // PI Interrupt
+
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 100000;
     }
 
     doSiDma(isToPif) {
         const ramAddr = this.siRegisters[0] & 0x00FFFFFF;
         const rdramView = new Uint8Array(this.memory.rdram);
+        this.siRegisters[6] |= 0x01; // Busy
+
         if (isToPif) {
             // DRAM to PIF RAM
             for (let i = 0; i < 64; i++) {
@@ -273,8 +419,7 @@ class MMU {
                 if (ramAddr + i < rdramView.length) rdramView[ramAddr + i] = this.pifRam[i];
             }
         }
-        this.siRegisters[6] &= ~0x01; // Not busy
-        this.miRegisters[2] |= 0x02;  // SI Interrupt
+        this.siBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 1000;
     }
     read64(address) {
         const physicalAddress = this.translateAddress(address);

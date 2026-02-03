@@ -83,10 +83,14 @@ class CPU {
 
         console.log(`HLE Boot: Entry Point=0x${entryPoint.toString(16)}, RAM Offset=0x${ramOffset.toString(16)}`);
 
-        // Initialize registers
-        this.gpr[29] = 0x80370000n; // sp
-        this.gpr[31] = 0x80000000n; // ra
-        this.cp0Registers[12] = 0x34000000n; // CU0, CU1 set
+        // Initialize registers as IPL3 would
+        this.gpr[29] = BigInt.asIntN(32, 0x80370000n); // sp
+        this.gpr[31] = BigInt.asIntN(32, 0x80000000n); // ra
+        this.gpr[16] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0, false))); // s0: ROM Info
+        this.gpr[18] = 0x00000001n; // s2
+
+        // Initial Status: CU0=1, CU1=1, BEV=0, EXL=0, IE=0
+        this.cp0Registers[12] = 0x30000000n;
 
         this.isHleBootDone = true;
     }
@@ -671,16 +675,16 @@ class CPU {
         const rtVal = this.gpr[rt];
         const byteOffset = Number(addr & 7n);
         let result;
-        // LDL Big-Endian: Load B0..Bn into R0..Rn
+        // LDL Big-Endian
         switch (byteOffset) {
-            case 0: result = (rtVal & 0x00FFFFFFFFFFFFFFn) | (dword & 0xFF00000000000000n); break;
-            case 1: result = (rtVal & 0x0000FFFFFFFFFFFFn) | (dword & 0xFFFF000000000000n); break;
-            case 2: result = (rtVal & 0x000000FFFFFFFFFFn) | (dword & 0xFFFFFF0000000000n); break;
-            case 3: result = (rtVal & 0x00000000FFFFFFFFn) | (dword & 0xFFFFFFFF00000000n); break;
-            case 4: result = (rtVal & 0x0000000000FFFFFFn) | (dword & 0xFFFFFFFFFF000000n); break;
-            case 5: result = (rtVal & 0x000000000000FFFFn) | (dword & 0xFFFFFFFFFFFF0000n); break;
-            case 6: result = (rtVal & 0x00000000000000FFn) | (dword & 0xFFFFFFFFFFFFFF00n); break;
-            case 7: result = dword; break;
+            case 0: result = dword; break;
+            case 1: result = (dword << 8n) | (rtVal & 0x00000000000000FFn); break;
+            case 2: result = (dword << 16n) | (rtVal & 0x000000000000FFFFn); break;
+            case 3: result = (dword << 24n) | (rtVal & 0x0000000000FFFFFFn); break;
+            case 4: result = (dword << 32n) | (rtVal & 0x00000000FFFFFFFFn); break;
+            case 5: result = (dword << 40n) | (rtVal & 0x000000FFFFFFFFFFn); break;
+            case 6: result = (dword << 48n) | (rtVal & 0x0000FFFFFFFFFFFFn); break;
+            case 7: result = (dword << 56n) | (rtVal & 0x00FFFFFFFFFFFFFFn); break;
         }
         this.gpr[rt] = result;
     }
@@ -693,16 +697,16 @@ class CPU {
         const rtVal = this.gpr[rt];
         const byteOffset = Number(addr & 7n);
         let result;
-        // LDR Big-Endian: Load Bn..B7 into Rn..R7
+        // LDR Big-Endian
         switch (byteOffset) {
-            case 0: result = dword; break;
-            case 1: result = (rtVal & 0xFF00000000000000n) | (dword & 0x00FFFFFFFFFFFFFFn); break;
-            case 2: result = (rtVal & 0xFFFF000000000000n) | (dword & 0x0000FFFFFFFFFFFFn); break;
-            case 3: result = (rtVal & 0xFFFFFF0000000000n) | (dword & 0x000000FFFFFFFFFFn); break;
-            case 4: result = (rtVal & 0xFFFFFFFF00000000n) | (dword & 0x00000000FFFFFFFFn); break;
-            case 5: result = (rtVal & 0xFFFFFFFFFF000000n) | (dword & 0x0000000000FFFFFFn); break;
-            case 6: result = (rtVal & 0xFFFFFFFFFFFF0000n) | (dword & 0x000000000000FFFFn); break;
-            case 7: result = (rtVal & 0xFFFFFFFFFFFFFF00n) | (dword & 0x00000000000000FFn); break;
+            case 0: result = (dword >>> 56n) | (rtVal & 0xFFFFFFFFFFFFFF00n); break;
+            case 1: result = (dword >>> 48n) | (rtVal & 0xFFFFFFFFFFFF0000n); break;
+            case 2: result = (dword >>> 40n) | (rtVal & 0xFFFFFFFFFF000000n); break;
+            case 3: result = (dword >>> 32n) | (rtVal & 0xFFFFFFFF00000000n); break;
+            case 4: result = (dword >>> 24n) | (rtVal & 0xFFFFFF0000000000n); break;
+            case 5: result = (dword >>> 16n) | (rtVal & 0xFFFF000000000000n); break;
+            case 6: result = (dword >>> 8n) | (rtVal & 0xFF00000000000000n); break;
+            case 7: result = dword; break;
         }
         this.gpr[rt] = result;
     }
@@ -715,16 +719,16 @@ class CPU {
         const byteOffset = Number(addr & 7n);
         let dword = this.mmu.read64(wordAddr);
         const rtVal = this.gpr[rt];
-        // SDL Big-Endian: Store R0..Rn into B0..Bn
+        // SDL Big-Endian
         switch (byteOffset) {
-            case 0: dword = (dword & 0x00FFFFFFFFFFFFFFn) | (rtVal & 0xFF00000000000000n); break;
-            case 1: dword = (dword & 0x0000FFFFFFFFFFFFn) | (rtVal & 0xFFFF000000000000n); break;
-            case 2: dword = (dword & 0x000000FFFFFFFFFFn) | (rtVal & 0xFFFFFF0000000000n); break;
-            case 3: dword = (dword & 0x00000000FFFFFFFFn) | (rtVal & 0xFFFFFFFF00000000n); break;
-            case 4: dword = (dword & 0x0000000000FFFFFFn) | (rtVal & 0xFFFFFFFFFF000000n); break;
-            case 5: dword = (dword & 0x000000000000FFFFn) | (rtVal & 0xFFFFFFFFFFFF0000n); break;
-            case 6: dword = (dword & 0x00000000000000FFn) | (rtVal & 0xFFFFFFFFFFFFFF00n); break;
-            case 7: dword = rtVal; break;
+            case 0: dword = rtVal; break;
+            case 1: dword = (dword & 0xFF00000000000000n) | (rtVal >>> 8n); break;
+            case 2: dword = (dword & 0xFFFF000000000000n) | (rtVal >>> 16n); break;
+            case 3: dword = (dword & 0xFFFFFF0000000000n) | (rtVal >>> 24n); break;
+            case 4: dword = (dword & 0xFFFFFFFF00000000n) | (rtVal >>> 32n); break;
+            case 5: dword = (dword & 0xFFFFFFFFFF000000n) | (rtVal >>> 40n); break;
+            case 6: dword = (dword & 0xFFFFFFFFFFFF0000n) | (rtVal >>> 48n); break;
+            case 7: dword = (dword & 0xFFFFFFFFFFFFFF00n) | (rtVal >>> 56n); break;
         }
         this.mmu.write64(wordAddr, dword);
     }
@@ -737,16 +741,16 @@ class CPU {
         const byteOffset = Number(addr & 7n);
         let dword = this.mmu.read64(wordAddr);
         const rtVal = this.gpr[rt];
-        // SDR Big-Endian: Store Rn..R7 into Bn..B7
+        // SDR Big-Endian
         switch (byteOffset) {
-            case 0: dword = rtVal; break;
-            case 1: dword = (dword & 0xFF00000000000000n) | (rtVal & 0x00FFFFFFFFFFFFFFn); break;
-            case 2: dword = (dword & 0xFFFF000000000000n) | (rtVal & 0x0000FFFFFFFFFFFFn); break;
-            case 3: dword = (dword & 0xFFFFFF0000000000n) | (rtVal & 0x000000FFFFFFFFFFn); break;
-            case 4: dword = (dword & 0xFFFFFFFF00000000n) | (rtVal & 0x00000000FFFFFFFFn); break;
-            case 5: dword = (dword & 0xFFFFFFFFFF000000n) | (rtVal & 0x0000000000FFFFFFn); break;
-            case 6: dword = (dword & 0xFFFFFFFFFFFF0000n) | (rtVal & 0x000000000000FFFFn); break;
-            case 7: dword = (dword & 0xFFFFFFFFFFFFFF00n) | (rtVal & 0x00000000000000FFn); break;
+            case 0: dword = (dword & 0x00FFFFFFFFFFFFFFn) | (rtVal << 56n); break;
+            case 1: dword = (dword & 0x0000FFFFFFFFFFFFn) | (rtVal << 48n); break;
+            case 2: dword = (dword & 0x000000FFFFFFFFFFn) | (rtVal << 40n); break;
+            case 3: dword = (dword & 0x00000000FFFFFFFFn) | (rtVal << 32n); break;
+            case 4: dword = (dword & 0x0000000000FFFFFFn) | (rtVal << 24n); break;
+            case 5: dword = (dword & 0x000000000000FFFFn) | (rtVal << 16n); break;
+            case 6: dword = (dword & 0x00000000000000FFn) | (rtVal << 8n); break;
+            case 7: dword = rtVal; break;
         }
         this.mmu.write64(wordAddr, dword);
     }
@@ -1009,17 +1013,24 @@ class CPU {
 
     raiseException(code, pc, isDelaySlot) {
         const status = this.cp0Registers[12];
+        const bev = (status >> 22n) & 1n;
+        const vector = bev ? 0xBFC00380n : 0x80000180n;
+
+        // Cause.ExcCode is updated even if EXL is 1
+        this.cp0Registers[13] = (this.cp0Registers[13] & ~0x7Cn) | (BigInt(code) << 2n);
+
         if (!(status & 2n)) { // EXL bit
-            this.cp0Registers[13] = (BigInt(code) << 2n); // Cause
             if (isDelaySlot) {
                 this.cp0Registers[13] |= 0x80000000n; // BD bit
                 this.cp0Registers[14] = pc - 4n; // EPC
             } else {
+                this.cp0Registers[13] &= ~0x80000000n; // Clear BD bit
                 this.cp0Registers[14] = pc; // EPC
             }
             this.cp0Registers[12] |= 2n; // Set EXL bit
+            if (!this.exceptionRaised) this.traceCount = 50;
         }
-        this.pc = 0x80000180n; // General exception vector
+        this.pc = vector;
         this.exceptionRaised = true;
         if (code !== 0) {
             const pcKey = `${code}_${pc}`;
