@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const ram = new Memory(8 * 1024 * 1024);
     const mmu = new MMU(ram);
+    window.mmu = mmu;
     const rcp = new RCP(mmu, framebuffer);
     const cpu = new CPU(mmu, rcp);
     mmu.cpu = cpu;

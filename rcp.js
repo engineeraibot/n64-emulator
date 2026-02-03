@@ -3,6 +3,7 @@ class RCP {
         console.log("RCP Initialized");
         this.mmu = mmu;
         this.framebuffer = framebuffer;
+        this.tmem = new Uint8Array(4096);
         this.reset();
     }
 
@@ -161,10 +162,44 @@ class RCP {
         }
     }
 
+    createIdentityMatrix() {
+        return [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        ];
+    }
+
+    readMatrix(addr) {
+        const rdramView = new DataView(this.mmu.memory.rdram);
+        const matrix = new Array(16);
+        for (let i = 0; i < 16; i++) {
+            const intPart = rdramView.getInt16(addr + i * 2, false);
+            const fracPart = rdramView.getUint16(addr + 32 + i * 2, false);
+            matrix[i] = intPart + fracPart / 65536.0;
+        }
+        return matrix;
+    }
+
+    multiplyMatrices(a, b) {
+        const res = new Array(16).fill(0);
+        for (let i = 0; i < 4; i++) {
+            for (let j = 0; j < 4; j++) {
+                for (let k = 0; k < 4; k++) {
+                    res[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
+                }
+            }
+        }
+        return res;
+    }
+
     processDisplayList(addr) {
         this.rspState = {
             segments: new Uint32Array(16),
             vertices: new Array(32).fill(0).map(() => ({ x: 0, y: 0, z: 0, w: 1, r: 0, g: 0, b: 0, a: 0, s: 0, t: 0 })),
+            modelviewStack: [this.createIdentityMatrix()],
+            projectionMatrix: this.createIdentityMatrix(),
             depthImage: 0,
             colorImage: 0,
             textureImage: 0,
@@ -212,6 +247,14 @@ class RCP {
                         return;
                     }
                     break;
+                case 0xDA: // G_MTX
+                    this.handleG_MTX(hi, lo);
+                    break;
+                case 0xD8: // G_POPMTX
+                    if (this.rspState.modelviewStack.length > 1) {
+                        this.rspState.modelviewStack.pop();
+                    }
+                    break;
                 case 0x01: // G_VTX
                     this.handleG_VTX(hi, lo);
                     break;
@@ -247,10 +290,10 @@ class RCP {
                     this.handleG_SETTILESIZE(hi, lo);
                     break;
                 case 0xF4: // G_LOADTILE
-                    // Skeleton
+                    this.handleG_LOADTILE(hi, lo);
                     break;
                 case 0xF3: // G_LOADBLOCK
-                    // Skeleton
+                    this.handleG_LOADBLOCK(hi, lo);
                     break;
                 case 0xFC: // G_SETCOMBINE
                     this.rspState.combine.hi = hi & 0xFFFFFF;
@@ -288,12 +331,30 @@ class RCP {
         const addr = this.resolveAddress(lo);
         const rdramView = new DataView(this.mmu.memory.rdram);
 
+        const mv = this.rspState.modelviewStack[this.rspState.modelviewStack.length - 1];
+        const p = this.rspState.projectionMatrix;
+        const mvp = this.multiplyMatrices(mv, p);
+
         for (let i = 0; i < num; i++) {
             const vAddr = addr + i * 16;
             const x = rdramView.getInt16(vAddr, false);
             const y = rdramView.getInt16(vAddr + 2, false);
             const z = rdramView.getInt16(vAddr + 4, false);
-            // Ignore flag at +6
+
+            // Transform
+            const tx = x * mvp[0] + y * mvp[4] + z * mvp[8] + mvp[12];
+            const ty = x * mvp[1] + y * mvp[5] + z * mvp[9] + mvp[13];
+            const tz = x * mvp[2] + y * mvp[6] + z * mvp[10] + mvp[14];
+            const tw = x * mvp[3] + y * mvp[7] + z * mvp[11] + mvp[15];
+
+            // Simple Viewport Transformation (assuming 320x240)
+            let screenX = 160;
+            let screenY = 120;
+            if (Math.abs(tw) > 0.0001) {
+                screenX = (tx / tw) * 160 + 160;
+                screenY = -(ty / tw) * 120 + 120;
+            }
+
             const s = rdramView.getInt16(vAddr + 8, false);
             const t = rdramView.getInt16(vAddr + 10, false);
             const r = rdramView.getUint8(vAddr + 12);
@@ -301,7 +362,7 @@ class RCP {
             const b = rdramView.getUint8(vAddr + 14);
             const a = rdramView.getUint8(vAddr + 15);
 
-            this.rspState.vertices[dest + i] = { x, y, z, r, g, b, a, s, t };
+            this.rspState.vertices[dest + i] = { x: screenX, y: screenY, z: tz, r, g, b, a, s, t };
         }
     }
 
@@ -357,6 +418,74 @@ class RCP {
         }
     }
 
+    handleG_MTX(hi, lo) {
+        const flags = (hi >>> 16) & 0xFF;
+        const addr = this.resolveAddress(lo);
+        const m = this.readMatrix(addr);
+
+        const G_MTX_PUSH = 0x01;
+        const G_MTX_LOAD = 0x02;
+        const G_MTX_PROJECTION = 0x04;
+
+        if (flags & G_MTX_PROJECTION) {
+            if (flags & G_MTX_LOAD) {
+                this.rspState.projectionMatrix = m;
+            } else {
+                this.rspState.projectionMatrix = this.multiplyMatrices(m, this.rspState.projectionMatrix);
+            }
+        } else {
+            let currentMtx = this.rspState.modelviewStack[this.rspState.modelviewStack.length - 1];
+            let newMtx;
+            if (flags & G_MTX_LOAD) {
+                newMtx = m;
+            } else {
+                newMtx = this.multiplyMatrices(m, currentMtx);
+            }
+
+            if (flags & G_MTX_PUSH) {
+                this.rspState.modelviewStack.push(newMtx);
+            } else {
+                this.rspState.modelviewStack[this.rspState.modelviewStack.length - 1] = newMtx;
+            }
+        }
+    }
+
+    handleG_LOADBLOCK(hi, lo) {
+        const tile = (lo >>> 24) & 0x7;
+        const lrs = (lo >>> 12) & 0xFFF;
+        const addr = this.rspState.textureImage;
+        const tmemAddr = this.rspState.tiles[tile].tmem * 8;
+        const size = (lrs + 1) * 8;
+
+        const rdramView = new Uint8Array(this.mmu.memory.rdram);
+        for (let i = 0; i < size && (tmemAddr + i < 4096); i++) {
+            if (addr + i < rdramView.length) {
+                this.tmem[tmemAddr + i] = rdramView[addr + i];
+            }
+        }
+    }
+
+    handleG_LOADTILE(hi, lo) {
+        const tile = (lo >>> 24) & 0x7;
+        const uls = (hi >>> 12) & 0xFFF;
+        const ult = hi & 0xFFF;
+        const lrs = (lo >>> 12) & 0xFFF;
+        const lrt = lo & 0xFFF;
+
+        const addr = this.rspState.textureImage;
+        const tmemAddr = this.rspState.tiles[tile].tmem * 8;
+        const line = this.rspState.tiles[tile].line * 8;
+
+        const rdramView = new Uint8Array(this.mmu.memory.rdram);
+        let srcOff = addr;
+        let dstOff = tmemAddr;
+        for (let y = ult / 4; y < lrt / 4; y++) {
+            for (let x = 0; x < line && (dstOff < 4096); x++) {
+                if (srcOff < rdramView.length) this.tmem[dstOff++] = rdramView[srcOff++];
+            }
+        }
+    }
+
     handleG_SETTILESIZE(hi, lo) {
         const tile = lo >>> 24;
         if (tile < 8) {
@@ -408,6 +537,7 @@ class RCP {
         const maxY = Math.ceil(Math.max(y1, y2, y3));
 
         const rdramView = new DataView(this.mmu.memory.rdram);
+        const tile = this.rspState.tiles[0]; // Simplified: assume tile 0
 
         for (let y = minY; y <= maxY; y++) {
             if (y < 0 || y >= 240) continue;
@@ -415,9 +545,27 @@ class RCP {
                 if (x < 0 || x >= 320) continue;
                 const weights = this.getBarycentricWeights(x, y, x1, y1, x2, y2, x3, y3);
                 if (weights) {
-                    const r = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
-                    const g = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
-                    const b = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+                    let r, g, b;
+
+                    // Texture coordinates
+                    const s = v1.s * weights.s + v2.s * weights.t + v3.s * weights.u;
+                    const t = v1.t * weights.s + v2.t * weights.t + v3.t * weights.u;
+
+                    // Simplified texture sampling (Point sampling, 16-bit RGBA)
+                    const texS = Math.floor(s / 32) & 0x1F;
+                    const texT = Math.floor(t / 32) & 0x1F;
+                    const texAddr = (tile.tmem * 8) + (texT * 32 + texS) * 2;
+
+                    if (texAddr + 2 <= 4096 && this.rspState.textureImage !== 0) {
+                        const val = (this.tmem[texAddr] << 8) | this.tmem[texAddr + 1];
+                        r = ((val >> 11) & 0x1F) << 3;
+                        g = ((val >> 6) & 0x1F) << 3;
+                        b = ((val >> 1) & 0x1F) << 3;
+                    } else {
+                        r = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
+                        g = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
+                        b = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+                    }
 
                     const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
 

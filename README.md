@@ -3,7 +3,7 @@
 A web-based Nintendo 64 emulator for mobile browsers.
 
 ## Current Status: Super Mario 64 Emulation
-Estimated completion: **65%**
+Estimated completion: **85%**
 
 ### Progress:
 - [x] CPU: Basic MIPS III/IV instructions (64-bit)
@@ -19,7 +19,7 @@ Estimated completion: **65%**
 - [x] RCP: RDP Basic Rasterization (Solid triangles, barycentric colors)
 - [x] HLE Boot: Skip IPL3, load entry point from ROM header
 - [x] Input: Mobile-first controller UI hooked to MMU
-- [ ] RCP: Matrix stack and coordinate transformations (Required for 3D)
-- [ ] RCP: Texture mapping and RDP Tile management
-- [ ] Audio Interface (AI) implementation
+- [x] RCP: Matrix stack and coordinate transformations (Required for 3D)
+- [x] RCP: Texture mapping and RDP Tile management
+- [x] Audio Interface (AI) implementation
 - [ ] SI: Full EEPROM/SRAM support
