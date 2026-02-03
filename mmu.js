@@ -29,6 +29,7 @@ class MMU {
     constructor(memory) {
         this.memory = memory;
         this.rcp = null; // Set after RCP is created
+        this.cpu = null; // Set after CPU is created
         this.viRegisters = new Uint32Array(14);
         this.miRegisters = new Uint32Array(4);
         this.piRegisters = new Uint32Array(13);
@@ -205,6 +206,7 @@ class MMU {
         if (cartToDram) {
             const rdramView = new Uint8Array(this.memory.rdram);
             const romOffset = cartAddr - 0x10000000;
+            console.log(`PI DMA: ROM 0x${cartAddr.toString(16)} -> RAM 0x${ramAddr.toString(16)} (len: 0x${length.toString(16)})`);
             for (let i = 0; i < length; i++) {
                 if (ramAddr + i < rdramView.length) {
                     rdramView[ramAddr + i] = this.memory.readRom8(romOffset + i);

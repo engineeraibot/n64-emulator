@@ -84,9 +84,35 @@ class RCP {
         const regIdx = (address - 0x04100000) >> 2;
         this.mmu.dpcRegisters[regIdx] = value;
         if (regIdx === 1) { // DPC_END_REG
-            // Auto-complete RDP task (HLE)
-            this.mmu.dpcRegisters[3] = value; // STATUS = END? No, CURRENT = END
+            this.processRdpCommands();
+            this.mmu.dpcRegisters[3] = value; // CURRENT = END
             this.mmu.miRegisters[2] |= 0x20; // DP Interrupt
+        }
+    }
+
+    processRdpCommands() {
+        let start = this.mmu.dpcRegisters[0] & 0xFFFFFF;
+        let end = this.mmu.dpcRegisters[1] & 0xFFFFFF;
+        if (end <= start) return;
+
+        const rdramView = new DataView(this.mmu.memory.rdram);
+        for (let addr = start; addr < end; addr += 8) {
+            const hi = rdramView.getUint32(addr, false);
+            const lo = rdramView.getUint32(addr + 4, false);
+            this.executeRdpCommand(hi, lo);
+        }
+    }
+
+    executeRdpCommand(hi, lo) {
+        const cmd = (hi >>> 24) & 0x3F;
+        switch (cmd) {
+            case 0x2F: // Set Other Modes
+                break;
+            case 0x3F: // Fill Triangle
+                break;
+            case 0x27: // Sync Full
+                this.mmu.miRegisters[2] |= 0x20; // DP Interrupt
+                break;
         }
     }
 
@@ -111,7 +137,21 @@ class RCP {
     }
 
     runRspTask() {
-        const firstInstr = this.mmu.spImemView.getUint32(0, false);
-        // console.log(`RSP Task Started. Microcode first instr: 0x${firstInstr.toString(16)}`);
+        // OSTask structure is usually at SP_DMEM 0xFC0
+        const taskPtr = 0xFC0;
+        const type = this.mmu.spDmemView.getUint32(taskPtr + 0x00, false);
+        const dataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x30, false) & 0xFFFFFF;
+        const dataSize = this.mmu.spDmemView.getUint32(taskPtr + 0x34, false);
+        const yieldDataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x38, false) & 0xFFFFFF;
+
+        if (type === 4) { // Decompression Task HLE
+            const input = new Uint8Array(this.mmu.memory.rdram);
+            const output = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr);
+            if (output) {
+                const rdramView = new Uint8Array(this.mmu.memory.rdram);
+                rdramView.set(output, yieldDataPtr);
+                console.log(`HLE: Decompressed MIO0 at 0x${dataPtr.toString(16)} to 0x${yieldDataPtr.toString(16)}`);
+            }
+        }
     }
 }
