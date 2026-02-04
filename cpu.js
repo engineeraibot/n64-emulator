@@ -52,7 +52,8 @@ class CPU {
                 count += 10000;
             }
             if (this.instructionCount % 100000 === 0) {
-                console.log(`CPU PC: 0x${(this.pc & 0xFFFFFFFFn).toString(16)} (Count: ${this.instructionCount})`);
+                const instr = this.mmu.read32(Number(this.pc & 0xFFFFFFFFn));
+                console.log(`CPU PC: 0x${(this.pc & 0xFFFFFFFFn).toString(16)} Instr: 0x${instr.toString(16).padStart(8, '0')} (Count: ${this.instructionCount})`);
             }
             setTimeout(runLoop, 0);
         };
