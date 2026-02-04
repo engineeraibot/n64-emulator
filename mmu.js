@@ -369,13 +369,17 @@ class MMU {
                     }
                 } else if (cmd === 0x04) { // EEPROM Read
                     const block = this.pifRam[i+3];
-                    for (let j = 0; j < 8; j++) {
-                        if (resIdx + j < 64) this.pifRam[resIdx+j] = this.eeprom[block * 8 + j];
+                    if (block < 64) {
+                        for (let j = 0; j < 8; j++) {
+                            if (resIdx + j < 64) this.pifRam[resIdx+j] = this.eeprom[block * 8 + j];
+                        }
                     }
                 } else if (cmd === 0x05) { // EEPROM Write
                     const block = this.pifRam[i+3];
-                    for (let j = 0; j < 8; j++) {
-                        this.eeprom[block * 8 + j] = this.pifRam[i+4+j];
+                    if (block < 64) {
+                        for (let j = 0; j < 8; j++) {
+                            if (i+4+j < 64) this.eeprom[block * 8 + j] = this.pifRam[i+4+j];
+                        }
                     }
                     if (resIdx < 64) this.pifRam[resIdx] = 0; // Success
                 } else if (cmd === 0x02 || cmd === 0x03) { // Write/Read Status
@@ -399,7 +403,8 @@ class MMU {
     doPiDma(cartToDram) {
         const ramAddr = this.piRegisters[0] & 0x007FFFFF; // Mask for 8MB RDRAM
         const cartAddr = this.piRegisters[1] & 0x1FFFFFFF;
-        const length = ((cartToDram ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
+        // Mask length to 24 bits
+        const length = ((cartToDram ? (this.piRegisters[3] & 0x00FFFFFF) : (this.piRegisters[2] & 0x00FFFFFF))) + 1;
 
         console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Raw: 0x${this.piRegisters[1].toString(16)}) Len=0x${length.toString(16)}`);
         this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
@@ -413,29 +418,15 @@ class MMU {
             // This handles standard Domain 1 (0x10000000) and various mirrors (Domain 2, etc.)
             const romOffsetBase = cartAddr & 0x0FFFFFFF;
 
-            // Safeguard for SM64 PAL: prevent overwriting exception vectors with junk
-            // On real hardware, out-of-bounds Domain 2 reads often return 0 or 0xFF.
-            // Some bootloaders do a PI DMA from 0x0 in Domain 2 which would overwrite RDRAM 0.
-            const isPotentialJunkMirror = (cartAddr < 0x05000000) || (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF);
-            const isOutOfBounds = (romOffsetBase >= romSize);
-
-            if (ramAddr < 0x1000 && length > 0x100 && isPotentialJunkMirror && isOutOfBounds) {
-                console.warn(`PI DMA: Ignoring potential junk transfer to exception vectors! RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} Len=0x${length.toString(16)}`);
-            } else {
-                for (let i = 0; i < length; i++) {
-                    const dst = ramAddr + i;
-                    let src = romOffsetBase + i;
-                    // Apply mirroring if out of bounds
-                    if (src >= romSize) {
-                        src = src % romSize;
-                    }
-                    if (dst < rdramView.length) {
-                        rdramView[dst] = romView[src];
-                    }
-                }
+            // Optimized copy loop: only iterate up to available RDRAM space
+            const limit = Math.min(length, rdramView.length - ramAddr);
+            for (let i = 0; i < limit; i++) {
+                const dst = ramAddr + i;
+                let src = (romOffsetBase + i) % romSize; // Apply mirroring
+                rdramView[dst] = romView[src];
             }
-            const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
-            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}). First 16 bytes: ${firstBytes}`);
+            const firstBytes = Array.from(rdramView.subarray(ramAddr, Math.min(ramAddr + 16, rdramView.length))).map(x => x.toString(16).padStart(2, '0')).join(' ');
+            console.log(`PI DMA Completed: copied ${limit} bytes (requested ${length}) to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}). First 16 bytes: ${firstBytes}`);
         }
 
         // Simulate DMA delay (More realistic timing for PI DMA)
@@ -445,7 +436,7 @@ class MMU {
     }
 
     doSiDma(isToPif) {
-        const ramAddr = this.siRegisters[0] & 0x00FFFFFF;
+        const ramAddr = this.siRegisters[0] & 0x007FFFFF; // Mask to 8MB
         const rdramView = new Uint8Array(this.memory.rdram);
         this.siRegisters[6] |= 0x01; // Busy
 
