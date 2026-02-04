@@ -91,8 +91,9 @@ class RCP {
         this.mmu.dpcRegisters[regIdx] = value;
         if (regIdx === 1) { // DPC_END_REG
             this.processRdpCommands();
-            this.mmu.dpcRegisters[3] = value; // CURRENT = END
+            this.mmu.dpcRegisters[3] = this.mmu.dpcRegisters[1]; // CURRENT = END
             this.mmu.miRegisters[2] |= 0x20; // DP Interrupt
+            this.mmu.updateInterrupts();
         }
     }
 
@@ -100,41 +101,127 @@ class RCP {
         let start = this.mmu.dpcRegisters[0] & 0xFFFFFF;
         let end = this.mmu.dpcRegisters[1] & 0xFFFFFF;
         if (end <= start) return;
-        console.log(`RDP Commands: 0x${start.toString(16)} to 0x${end.toString(16)}`);
 
         const rdramView = new DataView(this.mmu.memory.rdram);
-        for (let addr = start; addr < end; addr += 8) {
+        let addr = start;
+        while (addr < end) {
             const hi = rdramView.getUint32(addr, false);
             const lo = rdramView.getUint32(addr + 4, false);
-            this.executeRdpCommand(hi, lo);
+            const consumed = this.executeRdpCommand(hi, lo, addr);
+            addr += consumed;
+            if (consumed === 0) break; // Safety
         }
     }
 
-    executeRdpCommand(hi, lo) {
+    executeRdpCommand(hi, lo, addr) {
         this.rdpCommandCount++;
         const cmd = (hi >>> 24) & 0x3F;
-        if ((this.rdpCommandCount & 0x3FF) === 0) {
-            console.log(`RDP Command: 0x${cmd.toString(16)} (Total: ${this.rdpCommandCount})`);
+        let consumed = 8;
+
+        // Ensure we have rspState even for direct RDP commands
+        if (!this.rspState) {
+            this.rspState = {
+                segments: new Uint32Array(16),
+                vertices: new Array(32).fill(0).map(() => ({ x: 0, y: 0, z: 0, w: 1, r: 0, g: 0, b: 0, a: 0, s: 0, t: 0 })),
+                modelviewStack: [this.createIdentityMatrix()],
+                projectionMatrix: this.createIdentityMatrix(),
+                tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0, uls: 0, ult: 0, lrs: 0, lrt: 0 })),
+                combine: { hi: 0, lo: 0 },
+                primColor: 0xFFFFFFFF,
+                envColor: 0,
+                fillColor: 0,
+                colorImage: 0,
+                colorImageWidth: 320,
+                colorImageSize: 2,
+                textureScaleS: 1.0,
+                textureScaleT: 1.0,
+                otherModeHi: 0,
+                otherModeLo: 0,
+                currentTile: 0,
+                useTexture: false
+            };
         }
+
         switch (cmd) {
-            case 0x2F: // Set Other Modes
-                break;
-            case 0x3F: // Fill Triangle
-                break;
-            case 0x3E: // Fill Z-Buffer Triangle
-                break;
             case 0x24: // Texture Rectangle
-                break;
             case 0x25: // Texture Rectangle Flip
+                consumed = 24;
+                this.handleG_TEXRECT(hi, lo, addr, cmd === 0x25);
+                break;
+            case 0x2D: // Set Scissor
+                break;
+            case 0x2E: // Set Prim Depth
+                break;
+            case 0x2F: // Set Other Modes
+                this.rspState.otherModeLo = lo;
+                this.rspState.otherModeHi = hi & 0xFFFFFF;
+                break;
+            case 0x30: // Load TLUT
+                break;
+            case 0x32: // Set Tile Size
+                this.handleG_SETTILESIZE(hi, lo);
+                break;
+            case 0x33: // Load Block
+                this.handleG_LOADBLOCK(hi, lo);
+                break;
+            case 0x34: // Load Tile
+                this.handleG_LOADTILE(hi, lo);
+                break;
+            case 0x35: // Set Tile
+                this.handleG_SETTILE(hi, lo);
+                break;
+            case 0x36: // Fill Rectangle
+                this.handleG_FILLRECT(hi, lo);
+                break;
+            case 0x37: // Set Fill Color
+                this.rspState.fillColor = lo;
+                break;
+            case 0x38: // Set Fog Color
+                this.rspState.fogColor = lo;
+                break;
+            case 0x39: // Set Blend Color
+                this.rspState.blendColor = lo;
+                break;
+            case 0x3A: // Set Prim Color
+                this.rspState.primColor = lo;
+                break;
+            case 0x3B: // Set Env Color
+                this.rspState.envColor = lo;
+                break;
+            case 0x3C: // Set Combine
+                this.rspState.combine.hi = hi & 0xFFFFFF;
+                this.rspState.combine.lo = lo;
+                this.rspState.useTexture = ((hi & 0x00F00000) !== 0) || ((lo & 0x000000F0) !== 0);
+                break;
+            case 0x3D: // Set Texture Image
+                this.rspState.textureImage = lo & 0x7FFFFF;
+                break;
+            case 0x3E: // Set Mask Image (Z Image)
+                this.rspState.depthImage = lo & 0x7FFFFF;
+                break;
+            case 0x3F: // Set Color Image
+                this.rspState.colorImage = lo & 0x7FFFFF;
+                this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
+                this.rspState.colorImageSize = (hi >>> 19) & 0x3;
                 break;
             case 0x27: // Sync Full
                 this.mmu.miRegisters[2] |= 0x20; // DP Interrupt
+                this.mmu.updateInterrupts();
                 break;
             case 0x28: // Sync Pipe
             case 0x29: // Sync Tile
             case 0x2A: // Sync Load
                 break;
+            default:
+                if (cmd >= 0x08 && cmd <= 0x0F) { // Triangles
+                    consumed = 32;
+                    if (cmd & 4) consumed += 16; // Shade
+                    if (cmd & 2) consumed += 16; // Texture
+                    if (cmd & 1) consumed += 16; // Z
+                }
+                break;
         }
+        return consumed;
     }
 
     executeCommand(command) {
@@ -173,10 +260,10 @@ class RCP {
 
         if (type === 4) { // Decompression Task HLE
             // For MIO0 task: dataPtr is compressed source, yieldDataPtr is destination
-            const output = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr);
+            const output = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr & 0x7FFFFF);
             if (output) {
                 const rdramView = new Uint8Array(this.mmu.memory.rdram);
-                rdramView.set(output, yieldDataPtr);
+                rdramView.set(output, yieldDataPtr & 0x7FFFFF);
                 console.log(`HLE: Decompressed MIO0 at 0x${dataPtr.toString(16)} to 0x${yieldDataPtr.toString(16)} (size: ${output.length})`);
             }
         } else if (type === 1) { // Graphics Task HLE
@@ -697,21 +784,11 @@ class RCP {
         const maxY = Math.ceil(Math.max(y1, y2, y3));
 
         const rdramView = new DataView(this.mmu.memory.rdram);
-        const tileIdx = this.rspState.currentTile;
-        const tile = this.rspState.tiles[tileIdx];
         const width = this.rspState.colorImageWidth;
         const zAddr = this.rspState.depthImage;
 
         const zCmp = (this.rspState.otherModeLo & 0x10);
         const zUpd = (this.rspState.otherModeLo & 0x20);
-
-        // Decode Prim/Env colors
-        const pr = (this.rspState.primColor >>> 24) & 0xFF;
-        const pg = (this.rspState.primColor >>> 16) & 0xFF;
-        const pb = (this.rspState.primColor >>> 8) & 0xFF;
-        const er = (this.rspState.envColor >>> 24) & 0xFF;
-        const eg = (this.rspState.envColor >>> 16) & 0xFF;
-        const eb = (this.rspState.envColor >>> 8) & 0xFF;
 
         for (let y = minY; y <= maxY; y++) {
             if (y < 0 || y >= 240) continue;
@@ -731,67 +808,35 @@ class RCP {
                         }
                     }
 
-                    // Vertex color
-                    const vr = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
-                    const vg = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
-                    const vb = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+                    // Fragment Data
+                    const shade = {
+                        r: v1.r * weights.s + v2.r * weights.t + v3.r * weights.u,
+                        g: v1.g * weights.s + v2.g * weights.t + v3.g * weights.u,
+                        b: v1.b * weights.s + v2.b * weights.t + v3.b * weights.u,
+                        a: v1.a * weights.s + v2.a * weights.t + v3.a * weights.u
+                    };
 
-                    let r = vr, g = vg, b = vb;
+                    const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
+                    const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
 
-                    if (this.rspState.useTexture && this.rspState.textureImage !== 0) {
-                        // Texture coordinates
-                        const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
-                        const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
+                    const texel0 = this.sampleTexture(s, t, this.rspState.currentTile);
 
-                        // Improved texture sampling (Point sampling, 16-bit RGBA)
-                        const texS = Math.floor(s / 32.0);
-                        const texT = Math.floor(t / 32.0);
+                    // Color Combiner
+                    const color = this.combineColor(shade, texel0);
 
-                        const maskS = (1 << ((this.rspState.otherModeHi >> 14) & 0xF)); // Simplified mask
-                        const maskT = (1 << ((this.rspState.otherModeHi >> 4) & 0xF));
+                    // Alpha Testing
+                    if (color.a < 1 && (this.rspState.otherModeLo & 0x4000)) continue;
 
-                        // Use tile line for wrapping
-                        const wrapS = (tile.line * 8) / 2; // Width in pixels for 16-bit
-                        const wrapT = 64; // Fallback
-
-                        const ts = Math.abs(texS) % (wrapS || 32);
-                        const tt = Math.abs(texT) % wrapT;
-
-                        const lineBytes = tile.line * 8;
-                        const texAddr = (tile.tmem * 8) + (tt * lineBytes + ts * 2);
-
-                        if (texAddr + 2 <= 4096) {
-                            const val = (this.tmem[texAddr] << 8) | this.tmem[texAddr + 1];
-                            const tr = ((val >> 11) & 0x1F) << 3;
-                            const tg = ((val >> 6) & 0x1F) << 3;
-                            const tb = ((val >> 1) & 0x1F) << 3;
-                            const ta = (val & 1) ? 255 : 0;
-
-                            // Alpha Testing (Simplified: if ta is 0, skip pixel if alpha test enabled)
-                            if (ta === 0 && (this.rspState.otherModeLo & 0x4000)) continue;
-
-                            // Color Combiner Simulation (Simplified)
-                            // SM64 often uses (TEXEL0 * SHADE) or (TEXEL0 * PRIMITIVE)
-                            const comboHi = this.rspState.combine.hi;
-                            if ((comboHi & 0xF00) === 0x100) { // TEXEL0 * SHADE (Vertex Color)
-                                r = (tr * vr) / 255; g = (tg * vg) / 255; b = (tb * vb) / 255;
-                            } else if ((comboHi & 0xF00) === 0x300) { // TEXEL0 * PRIMITIVE
-                                r = (tr * pr) / 255; g = (tg * pg) / 255; b = (tb * pb) / 255;
-                            } else {
-                                r = tr; g = tg; b = tb;
-                            }
-                        }
-                    }
-
+                    const r = color.r, g = color.g, b = color.b;
                     const size = this.rspState.colorImageSize;
                     if (size === 2) {
-                        const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | ((r+g+b > 0) ? 1 : 0);
+                        const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | ((color.a > 127) ? 1 : 0);
                         const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
                         if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
                             rdramView.setUint16(pAddr, color16, false);
                         }
                     } else if (size === 3) {
-                        const color32 = ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | 255;
+                        const color32 = ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | (color.a & 0xFF);
                         const pAddr = (addr + (y * width + x) * 4) & 0x7FFFFF;
                         if (pAddr + 4 <= this.mmu.memory.rdram.byteLength) {
                             rdramView.setUint32(pAddr, color32, false);
@@ -802,6 +847,143 @@ class RCP {
         }
     }
 
+    sampleTexture(s, t, tileIdx) {
+        if (!this.rspState.useTexture || this.rspState.textureImage === 0) return { r: 255, g: 255, b: 255, a: 255 };
+        const tile = this.rspState.tiles[tileIdx];
+
+        // Improved texture sampling
+        let texS = Math.floor(s / 32.0);
+        let texT = Math.floor(t / 32.0);
+
+        // Apply masking and shifting
+        const maskS = (this.rspState.otherModeHi >> 14) & 0xF;
+        const maskT = (this.rspState.otherModeHi >> 4) & 0xF;
+        const shiftS = (this.rspState.otherModeHi >> 10) & 0xF;
+        const shiftT = this.rspState.otherModeHi & 0xF;
+
+        if (shiftS > 0) { if (shiftS < 11) texS >>= shiftS; else texS <<= (16 - shiftS); }
+        if (shiftT > 0) { if (shiftT < 11) texT >>= shiftT; else texT <<= (16 - shiftT); }
+
+        const wrapS = maskS ? (1 << maskS) : 1024;
+        const wrapT = maskT ? (1 << maskT) : 1024;
+
+        texS = Math.abs(texS) % wrapS;
+        texT = Math.abs(texT) % wrapT;
+
+        const lineBytes = tile.line * 8;
+        const tmemAddr = (tile.tmem * 8);
+
+        let r = 255, g = 255, b = 255, a = 255;
+
+        if (tile.format === 0) { // RGBA
+            if (tile.size === 2) { // 16-bit RGBA5551
+                const addr = tmemAddr + (texT * lineBytes + texS * 2);
+                if (addr + 2 <= 4096) {
+                    const val = (this.tmem[addr] << 8) | this.tmem[addr + 1];
+                    r = ((val >> 11) & 0x1F) << 3;
+                    g = ((val >> 6) & 0x1F) << 3;
+                    b = ((val >> 1) & 0x1F) << 3;
+                    a = (val & 1) ? 255 : 0;
+                }
+            }
+        } else if (tile.format === 4) { // I (Intensity)
+            if (tile.size === 0) { // 4-bit I
+                const addr = tmemAddr + (texT * lineBytes + (texS >> 1));
+                if (addr < 4096) {
+                    const byte = this.tmem[addr];
+                    const val = (texS & 1) ? (byte & 0xF) : (byte >> 4);
+                    r = g = b = a = (val << 4) | val;
+                }
+            } else if (tile.size === 1) { // 8-bit I
+                const addr = tmemAddr + (texT * lineBytes + texS);
+                if (addr < 4096) {
+                    r = g = b = a = this.tmem[addr];
+                }
+            }
+        } else if (tile.format === 3) { // IA (Intensity-Alpha)
+            if (tile.size === 0) { // 4-bit IA (3 intensity, 1 alpha)
+                const addr = tmemAddr + (texT * lineBytes + (texS >> 1));
+                if (addr < 4096) {
+                    const byte = this.tmem[addr];
+                    const val = (texS & 1) ? (byte & 0xF) : (byte >> 4);
+                    const intensity = ((val >> 1) & 0x7) << 5;
+                    r = g = b = intensity;
+                    a = (val & 1) ? 255 : 0;
+                }
+            } else if (tile.size === 1) { // 8-bit IA (4 intensity, 4 alpha)
+                const addr = tmemAddr + (texT * lineBytes + texS);
+                if (addr < 4096) {
+                    const val = this.tmem[addr];
+                    const intensity = (val >> 4) << 4;
+                    r = g = b = intensity;
+                    a = (val & 0xF) << 4;
+                }
+            }
+        }
+        return { r, g, b, a };
+    }
+
+    combineColor(shade, texel0) {
+        const combineHi = this.rspState.combine.hi;
+        const combineLo = this.rspState.combine.lo;
+
+        // Simplified 1-cycle combiner: (A - B) * C + D
+        // Extracting sources for RGB (Cycle 1)
+        const aSrc = (combineHi >> 20) & 0xF;
+        const bSrc = (combineHi >> 15) & 0x1F;
+        const cSrc = (combineHi >> 10) & 0x1F;
+        const dSrc = (combineHi >> 6) & 0x7;
+
+        const getVal = (src, isAlpha) => {
+            switch (src) {
+                case 0: return isAlpha ? texel0.a : {r: texel0.r, g: texel0.g, b: texel0.b}; // TEXEL0
+                case 4: return isAlpha ? shade.a : {r: shade.r, g: shade.g, b: shade.b};     // SHADE
+                case 3: { // PRIMITIVE
+                    const p = this.rspState.primColor;
+                    return isAlpha ? (p & 0xFF) : {r: (p >> 24) & 0xFF, g: (p >> 16) & 0xFF, b: (p >> 8) & 0xFF};
+                }
+                case 5: { // ENV
+                    const e = this.rspState.envColor;
+                    return isAlpha ? (e & 0xFF) : {r: (e >> 24) & 0xFF, g: (e >> 16) & 0xFF, b: (e >> 8) & 0xFF};
+                }
+                case 6: return isAlpha ? 255 : {r: 255, g: 255, b: 255}; // 1.0
+                case 7: return isAlpha ? 0 : {r: 0, g: 0, b: 0};         // 0.0
+                default: return isAlpha ? 0 : {r: 0, g: 0, b: 0};
+            }
+        };
+
+        const A = getVal(aSrc, false);
+        const B = getVal(bSrc, false);
+        const C = getVal(cSrc, false);
+        const D = getVal(dSrc, false);
+
+        // N64 C source is usually a multiplier. If it's TEXEL0, we use its components.
+        // Simplified:
+        const r = (A.r - B.r) * (C.r / 255.0) + D.r;
+        const g = (A.g - B.g) * (C.g / 255.0) + D.g;
+        const b = (A.b - B.b) * (C.b / 255.0) + D.b;
+
+        // Alpha combiner
+        const aASrc = (combineLo >> 12) & 0x7;
+        const aBSrc = (combineLo >> 9) & 0x7;
+        const aCSrc = (combineLo >> 6) & 0x7;
+        const aDSrc = (combineLo >> 3) & 0x7;
+
+        const aA = getVal(aASrc, true);
+        const aB = getVal(aBSrc, true);
+        const aC = getVal(aCSrc, true);
+        const aD = getVal(aDSrc, true);
+
+        const a = (aA - aB) * (aC / 255.0) + aD;
+
+        return {
+            r: Math.max(0, Math.min(255, r)),
+            g: Math.max(0, Math.min(255, g)),
+            b: Math.max(0, Math.min(255, b)),
+            a: Math.max(0, Math.min(255, a))
+        };
+    }
+
     getBarycentricWeights(px, py, x1, y1, x2, y2, x3, y3) {
         const area = 0.5 * (-y2 * x3 + y1 * (-x2 + x3) + x1 * (y2 - y3) + x2 * y3);
         if (Math.abs(area) < 0.0001) return null;
@@ -810,5 +992,40 @@ class RCP {
         const u = 1 - s - t;
         if (s >= 0 && t >= 0 && u >= 0) return { s, t, u };
         return null;
+    }
+
+    handleG_TEXRECT(hi, lo, addr, flip) {
+        // G_TEXRECT is 3 words (24 bytes)
+        // Word 0: 24 XL YL (XL, YL are 10.2)
+        // Word 1: ?? XH YH (XH, YH are 10.2)
+        // Word 2: (G_RDPHALF_1) S T (S, T are 10.5)
+        // Word 3: (G_RDPHALF_2) dSdT dSdT (10.5)
+        // Actually in RDP direct it's 3 words.
+        const rdramView = new DataView(this.mmu.memory.rdram);
+        const w1hi = rdramView.getUint32(addr + 8, false);
+        const w1lo = rdramView.getUint32(addr + 12, false);
+        const w2hi = rdramView.getUint32(addr + 16, false);
+        const w2lo = rdramView.getUint32(addr + 20, false);
+
+        const x2 = (hi >>> 12) & 0xFFF;
+        const y2 = hi & 0xFFF;
+        const tile = (lo >>> 24) & 0x7;
+        const x1 = (lo >>> 12) & 0xFFF;
+        const y1 = lo & 0xFFF;
+
+        const s = (w1hi >>> 16) & 0xFFFF;
+        const t = w1hi & 0xFFFF;
+        const dsdx = (w1lo >>> 16) & 0xFFFF;
+        const dtdy = w1lo & 0xFFFF;
+
+        // Simplified: draw as two triangles or just a rect
+        const v1 = { x: x1/4, y: y1/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: t };
+        const v2 = { x: x2/4, y: y1/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (x2-x1)*dsdx/4, t: t };
+        const v3 = { x: x1/4, y: y2/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: t + (y2-y1)*dtdy/4 };
+        const v4 = { x: x2/4, y: y2/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (x2-x1)*dsdx/4, t: t + (y2-y1)*dtdy/4 };
+
+        this.rspState.currentTile = tile;
+        this.drawTriangle(v1, v2, v3);
+        this.drawTriangle(v2, v3, v4);
     }
 }
