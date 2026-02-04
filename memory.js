@@ -70,19 +70,26 @@ class Memory {
     }
 
     readRom8(address) {
-        if (!this.romView || address < 0 || address >= this.rom.byteLength) return 0;
-        return this.romView.getUint8(address);
+        if (!this.romView || !this.rom) return 0;
+        const offset = (address >>> 0) % this.rom.byteLength;
+        return this.romView.getUint8(offset);
     }
     readRom16(address) {
-        if (!this.romView || address < 0 || address + 2 > this.rom.byteLength) return 0;
-        return this.romView.getUint16(address, false);
+        if (!this.romView || !this.rom) return 0;
+        const offset = (address >>> 0) % this.rom.byteLength;
+        if (offset + 2 > this.rom.byteLength) return 0; // Boundary
+        return this.romView.getUint16(offset, false);
     }
     readRom32(address) {
-        if (!this.romView || address < 0 || address + 4 > this.rom.byteLength) return 0;
-        return this.romView.getUint32(address, false);
+        if (!this.romView || !this.rom) return 0;
+        const offset = (address >>> 0) % this.rom.byteLength;
+        if (offset + 4 > this.rom.byteLength) return 0; // Boundary
+        return this.romView.getUint32(offset, false);
     }
     readRom64(address) {
-        if (!this.romView || address < 0 || address + 8 > this.rom.byteLength) return 0n;
-        return this.romView.getBigUint64(address, false);
+        if (!this.romView || !this.rom) return 0n;
+        const offset = (address >>> 0) % this.rom.byteLength;
+        if (offset + 8 > this.rom.byteLength) return 0n; // Boundary
+        return this.romView.getBigUint64(offset, false);
     }
 }

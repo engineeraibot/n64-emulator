@@ -42,6 +42,11 @@ class MMU {
         this.dpcRegisters = new Uint32Array(8);
         this.aiRegisters = new Uint32Array(6);
         this.riRegisters = new Uint32Array(8);
+        this.riRegisters[0] = 0x0;       // RI_MODE
+        this.riRegisters[1] = 0x0;       // RI_CONFIG
+        this.riRegisters[2] = 0x0;       // RI_CURRENT_LOAD
+        this.riRegisters[3] = 0x14;      // RI_SELECT (Indicates 8MB)
+        this.riRegisters[4] = 0x63634;   // RI_REFRESH
         this.pifRom = new Uint8Array(2048); // 2KB PIF ROM
         this.pifRomView = new DataView(this.pifRom.buffer);
         this.pifRam = new Uint8Array(64);
@@ -406,7 +411,8 @@ class MMU {
         // Mask length to 24 bits
         const length = ((cartToDram ? (this.piRegisters[3] & 0x00FFFFFF) : (this.piRegisters[2] & 0x00FFFFFF))) + 1;
 
-        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Raw: 0x${this.piRegisters[1].toString(16)}) Len=0x${length.toString(16)}`);
+        const romOffsetBase = cartAddr & 0x0FFFFFFF;
+        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}) Len=0x${length.toString(16)}`);
         this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
 
         if (cartToDram && this.memory.rom) {
