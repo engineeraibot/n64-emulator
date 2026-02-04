@@ -158,6 +158,7 @@ class RCP {
     }
 
     runRspTask() {
+        console.log("RSP Task called!");
         // OSTask structure is usually at SP_DMEM 0xFC0
         const taskPtr = 0xFC0;
         const type = this.mmu.spDmemView.getUint32(taskPtr + 0x00, false);
@@ -408,8 +409,15 @@ class RCP {
     }
 
     handleG_VTX(hi, lo) {
-        const num = (hi >>> 12) & 0xFF;
-        const dest = (hi & 0xFF) / 2; // Index in vertex buffer
+        let num, dest;
+        const cmd = (hi >>> 24) & 0xFF;
+        if (cmd === 0x04) { // Fast3D (SM64)
+            num = (hi >>> 8) & 0xFF;
+            dest = (hi >>> 16) & 0xFF;
+        } else {
+            num = (hi >>> 12) & 0xFF;
+            dest = (hi & 0xFF) / 2;
+        }
         const addr = this.resolveAddress(lo);
         const rdramView = new DataView(this.mmu.memory.rdram);
 
@@ -424,10 +432,10 @@ class RCP {
             const z = rdramView.getInt16(vAddr + 4, false);
 
             // Transform
-            const tx = x * mvp[0] + y * mvp[4] + z * mvp[8] + mvp[12];
-            const ty = x * mvp[1] + y * mvp[5] + z * mvp[9] + mvp[13];
-            const tz = x * mvp[2] + y * mvp[6] + z * mvp[10] + mvp[14];
-            const tw = x * mvp[3] + y * mvp[7] + z * mvp[11] + mvp[15];
+            const tx = x * mvp[0] + y * mvp[1] + z * mvp[2] + mvp[3];
+            const ty = x * mvp[4] + y * mvp[5] + z * mvp[6] + mvp[7];
+            const tz = x * mvp[8] + y * mvp[9] + z * mvp[10] + mvp[11];
+            const tw = x * mvp[12] + y * mvp[13] + z * mvp[14] + mvp[15];
 
             // Viewport Transformation
             let screenX = 160;
@@ -452,7 +460,7 @@ class RCP {
             const b = rdramView.getUint8(vAddr + 14);
             const a = rdramView.getUint8(vAddr + 15);
 
-            this.rspState.vertices[dest + i] = { x: screenX, y: screenY, z: tz, r, g, b, a, s, t };
+            this.rspState.vertices[dest + i] = { x: screenX, y: screenY, z: screenZ, r, g, b, a, s, t };
         }
     }
 
@@ -468,9 +476,10 @@ class RCP {
             v3idx = (lo >>> 0) & 0xFF;
         }
 
-        const v1 = this.rspState.vertices[v1idx / 2];
-        const v2 = this.rspState.vertices[v2idx / 2];
-        const v3 = this.rspState.vertices[v3idx / 2];
+        const scale = isF3DEX2 ? 2 : 16;
+        const v1 = this.rspState.vertices[v1idx / scale];
+        const v2 = this.rspState.vertices[v2idx / scale];
+        const v3 = this.rspState.vertices[v3idx / scale];
 
         if (v1 && v2 && v3) {
             this.drawTriangle(v1, v2, v3);
@@ -486,14 +495,15 @@ class RCP {
         const v5idx = (lo >>> 8) & 0xFF;
         const v6idx = (lo >>> 0) & 0xFF;
 
-        const v1 = this.rspState.vertices[v1idx / 2];
-        const v2 = this.rspState.vertices[v2idx / 2];
-        const v3 = this.rspState.vertices[v3idx / 2];
+        const scale = isF3DEX2 ? 2 : 16;
+        const v1 = this.rspState.vertices[v1idx / scale];
+        const v2 = this.rspState.vertices[v2idx / scale];
+        const v3 = this.rspState.vertices[v3idx / scale];
         if (v1 && v2 && v3) this.drawTriangle(v1, v2, v3);
 
-        const v4 = this.rspState.vertices[v4idx / 2];
-        const v5 = this.rspState.vertices[v5idx / 2];
-        const v6 = this.rspState.vertices[v6idx / 2];
+        const v4 = this.rspState.vertices[v4idx / scale];
+        const v5 = this.rspState.vertices[v5idx / scale];
+        const v6 = this.rspState.vertices[v6idx / scale];
         if (v4 && v5 && v6) this.drawTriangle(v4, v5, v6);
     }
 
@@ -510,7 +520,7 @@ class RCP {
         const index = (hi >>> 16) & 0xFF;
         const addr = this.resolveAddress(lo);
         const rdramView = new DataView(this.mmu.memory.rdram);
-        if (index === 0x01) { // G_MV_VIEWPORT
+        if (index === 0x01 || index === 0x80) { // G_MV_VIEWPORT (0x01: F3DEX, 0x80: F3D)
             const vAddr = addr & 0x7FFFFF;
             console.log(`G_MOVEMEM: Viewport at 0x${addr.toString(16)}`);
             if (vAddr + 16 <= rdramView.byteLength) {
@@ -546,9 +556,10 @@ class RCP {
         const addr = this.resolveAddress(lo);
         const m = this.readMatrix(addr & 0x7FFFFF);
 
-        const G_MTX_PUSH = 0x01;
+        // Fast3D (SM64) flags:
+        const G_MTX_PROJECTION = 0x01;
         const G_MTX_LOAD = 0x02;
-        const G_MTX_PROJECTION = 0x04;
+        const G_MTX_PUSH = 0x04;
 
         if (flags & G_MTX_PROJECTION) {
             if (flags & G_MTX_LOAD) {
@@ -754,6 +765,10 @@ class RCP {
                             const tr = ((val >> 11) & 0x1F) << 3;
                             const tg = ((val >> 6) & 0x1F) << 3;
                             const tb = ((val >> 1) & 0x1F) << 3;
+                            const ta = (val & 1) ? 255 : 0;
+
+                            // Alpha Testing (Simplified: if ta is 0, skip pixel if alpha test enabled)
+                            if (ta === 0 && (this.rspState.otherModeLo & 0x4000)) continue;
 
                             // Color Combiner Simulation (Simplified)
                             // SM64 often uses (TEXEL0 * SHADE) or (TEXEL0 * PRIMITIVE)
@@ -770,7 +785,7 @@ class RCP {
 
                     const size = this.rspState.colorImageSize;
                     if (size === 2) {
-                        const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
+                        const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | ((r+g+b > 0) ? 1 : 0);
                         const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
                         if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
                             rdramView.setUint16(pAddr, color16, false);

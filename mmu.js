@@ -425,8 +425,8 @@ class MMU {
             if (romOffset !== -1) {
                 for (let i = 0; i < length; i++) {
                     const dst = ramAddr + i;
-                    const src = (romOffset + i) % romView.length;
-                    if (dst < rdramView.length) {
+                    const src = romOffset + i;
+                    if (dst < rdramView.length && src < romView.length) {
                         rdramView[dst] = romView[src];
                     }
                 }
