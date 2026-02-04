@@ -228,14 +228,18 @@ class CPU {
             case 0x2F: break; // CACHE
             case 0x30: this.opLL(instruction); break;
             case 0x31: this.opLWC1(instruction); break;
+            case 0x32: break; // LWC2 (NOP)
             case 0x33: break; // PREF
             case 0x34: this.opLLD(instruction); break;
             case 0x35: this.opLDC1(instruction); break;
+            case 0x36: break; // LDC2 (NOP)
             case 0x38: this.opSC(instruction); break;
             case 0x39: this.opSWC1(instruction); break;
+            case 0x3A: break; // SWC2 (NOP)
             case 0x3B: break; // CACHE
             case 0x3C: this.opSCD(instruction); break;
             case 0x3D: this.opSDC1(instruction); break;
+            case 0x3E: break; // SDC2 (NOP)
             case 0x37: this.opLD(instruction); break;
             case 0x3F: this.opSD(instruction); break;
             default:
