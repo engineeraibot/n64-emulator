@@ -100,40 +100,16 @@ class RCP {
         let start = this.mmu.dpcRegisters[0] & 0xFFFFFF;
         let end = this.mmu.dpcRegisters[1] & 0xFFFFFF;
         if (end <= start) return;
-        console.log(`RDP Commands: 0x${start.toString(16)} to 0x${end.toString(16)}`);
+        if ((this.rdpCommandCount & 0x3FF) === 0) {
+            console.log(`RDP Commands: 0x${start.toString(16)} to 0x${end.toString(16)}`);
+        }
 
         const rdramView = new DataView(this.mmu.memory.rdram);
         for (let addr = start; addr < end; addr += 8) {
-            const hi = rdramView.getUint32(addr, false);
-            const lo = rdramView.getUint32(addr + 4, false);
-            this.executeRdpCommand(hi, lo);
-        }
-    }
-
-    executeRdpCommand(hi, lo) {
-        this.rdpCommandCount++;
-        const cmd = (hi >>> 24) & 0x3F;
-        if ((this.rdpCommandCount & 0x3FF) === 0) {
-            console.log(`RDP Command: 0x${cmd.toString(16)} (Total: ${this.rdpCommandCount})`);
-        }
-        switch (cmd) {
-            case 0x2F: // Set Other Modes
-                break;
-            case 0x3F: // Fill Triangle
-                break;
-            case 0x3E: // Fill Z-Buffer Triangle
-                break;
-            case 0x24: // Texture Rectangle
-                break;
-            case 0x25: // Texture Rectangle Flip
-                break;
-            case 0x27: // Sync Full
-                this.mmu.miRegisters[2] |= 0x20; // DP Interrupt
-                break;
-            case 0x28: // Sync Pipe
-            case 0x29: // Sync Tile
-            case 0x2A: // Sync Load
-                break;
+            const hi = rdramView.getUint32(addr & 0x7FFFFF, false);
+            const lo = rdramView.getUint32((addr + 4) & 0x7FFFFF, false);
+            const cmd = (hi >>> 24) & 0x3F;
+            this.executeDisplayListCommand(cmd | 0xC0, hi, lo, addr);
         }
     }
 
@@ -245,6 +221,10 @@ class RCP {
         this.executeDisplayList(addr);
     }
 
+    get cycleMode() {
+        return (this.rspState.otherModeLo >>> 20) & 0x03;
+    }
+
     executeDisplayList(addr) {
         const rdramView = new DataView(this.mmu.memory.rdram);
         let pc = addr;
@@ -287,7 +267,7 @@ class RCP {
                         this.rspState.modelviewStack.pop();
                     }
                     break;
-                case 0xD7: // G_TEXTURE (Fast3D uses 0xD7 for some things?)
+                case 0xD7: // G_TEXTURE
                     break;
                 case 0x01: // G_VTX (F3DEX2)
                 case 0x04: // G_VTX (F3D)
@@ -308,8 +288,6 @@ class RCP {
                 case 0xBD: // G_MOVEMEM
                     this.handleG_MOVEMEM(hi, lo);
                     break;
-                case 0xB2: // G_MODIFYVTX
-                    break;
                 case 0xDB: // G_SETSEGMENT
                     const seg = (hi >>> 2) & 0xF;
                     this.rspState.segments[seg] = lo & 0xFFFFFF;
@@ -320,86 +298,130 @@ class RCP {
                 case 0xB7: // G_MOVEMEM (F3DEX2)
                     this.handleG_MOVEMEM(hi, lo);
                     break;
-                case 0xFD: // G_SETTIMG
-                    this.rspState.textureImage = lo & 0x7FFFFF;
-                    break;
-                case 0xFF: // G_SETCIMG
-                    this.rspState.colorImage = lo & 0x7FFFFF;
-                    this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
-                    this.rspState.colorImageFormat = (hi >>> 21) & 0x7;
-                    this.rspState.colorImageSize = (hi >>> 19) & 0x3;
-                    console.log(`G_SETCIMG: Addr=0x${this.rspState.colorImage.toString(16)} Width=${this.rspState.colorImageWidth} Format=${this.rspState.colorImageFormat} Size=${this.rspState.colorImageSize}`);
-                    break;
-                case 0xFE: // G_SETZIMG
-                    this.rspState.depthImage = lo & 0x7FFFFF;
-                    break;
-                case 0xF5: // G_SETTILE
-                    this.handleG_SETTILE(hi, lo);
-                    break;
-                case 0xF2: // G_SETTILESIZE
-                    this.handleG_SETTILESIZE(hi, lo);
-                    break;
-                case 0xF4: // G_LOADTILE
-                    this.handleG_LOADTILE(hi, lo);
-                    break;
-                case 0xF3: // G_LOADBLOCK
-                    this.handleG_LOADBLOCK(hi, lo);
-                    break;
-                case 0xFC: // G_SETCOMBINE
-                    this.rspState.combine.hi = hi & 0xFFFFFF;
-                    this.rspState.combine.lo = lo;
-                    // If any of the color sources is TEXEL0 or TEXEL1
-                    this.rspState.useTexture = ((hi & 0x00F00000) !== 0) || ((lo & 0x000000F0) !== 0);
-                    break;
-                case 0xF6: // G_FILLRECT
-                    this.handleG_FILLRECT(hi, lo);
-                    // console.log(`G_FILLRECT: 0x${hi.toString(16)} 0x${lo.toString(16)}`);
-                    break;
-                case 0xF7: // G_SETFILLCOLOR
-                    this.rspState.fillColor = lo;
-                    break;
-                case 0xE2: // G_SETOTHERMODE_L (Fast3D)
-                case 0xB9: // G_SETOTHERMODE_L (F3DEX)
-                    this.rspState.otherModeLo = lo;
-                    break;
-                case 0xE3: // G_SETOTHERMODE_H (Fast3D)
-                case 0xBA: // G_SETOTHERMODE_H (F3DEX)
-                    this.rspState.otherModeHi = lo;
-                    break;
-                case 0xBB: // G_TEXTURE
-                    this.rspState.textureScaleS = (lo >>> 16) / 65536.0;
-                    this.rspState.textureScaleT = (lo & 0xFFFF) / 65536.0;
-                    this.rspState.currentTile = (hi >>> 8) & 0x7;
-                    break;
-                case 0xED: // G_SETSCISSOR
-                    break;
-                case 0xFA: // G_SETPRIMCOLOR
-                    this.rspState.primColor = lo;
-                    break;
-                case 0xFB: // G_SETENVCOLOR
-                    this.rspState.envColor = lo;
-                    break;
-                case 0xF9: // G_SETBLENDCOLOR
-                    this.rspState.blendColor = lo;
-                    break;
-                case 0xF8: // G_SETFOGCOLOR
-                    this.rspState.fogColor = lo;
-                    break;
-                case 0xE7: // G_DPPIPESYNC
-                case 0xE6: // G_RDPLOADSYNC
-                case 0xE8: // G_DPFULLSYNC
-                case 0xE9: // G_DPTILESYNC
-                    break;
-                case 0xB3: // G_RDPHALF_1
-                case 0xB4: // G_RDPHALF_2
-                    break;
                 default:
-                    if (!this.warnedCommands.has(cmd)) {
-                        console.warn(`Unknown RSP Command: 0x${cmd.toString(16).padStart(2, '0')}`);
-                        this.warnedCommands.add(cmd);
-                    }
+                    this.executeDisplayListCommand(cmd, hi, lo, pc - 8);
+                    // Special case for multi-word commands in display list
+                    if (cmd === 0xE4 || cmd === 0xE5) pc += 16;
                     break;
             }
+        }
+    }
+
+    executeDisplayListCommand(cmd, hi, lo, pc) {
+        const rdramView = new DataView(this.mmu.memory.rdram);
+        this.rdpCommandCount++;
+        switch (cmd) {
+            case 0xFD: // G_SETTIMG
+            case 0x3D: // RDP SETTIMG
+                this.rspState.textureImage = this.resolveAddress(lo);
+                break;
+            case 0xFF: // G_SETCIMG
+            case 0x3F: // RDP SETCIMG
+                this.rspState.colorImage = this.resolveAddress(lo);
+                this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
+                this.rspState.colorImageFormat = (hi >>> 21) & 0x7;
+                this.rspState.colorImageSize = (hi >>> 19) & 0x3;
+                if ((this.rdpCommandCount & 0xFF) === 0) {
+                    console.log(`G_SETCIMG: Addr=0x${this.rspState.colorImage.toString(16)} Width=${this.rspState.colorImageWidth} Format=${this.rspState.colorImageFormat} Size=${this.rspState.colorImageSize}`);
+                }
+                break;
+            case 0xFE: // G_SETZIMG
+            case 0x3E: // RDP SETZIMG
+                this.rspState.depthImage = this.resolveAddress(lo);
+                break;
+            case 0xF5: // G_SETTILE
+            case 0x35: // RDP SETTILE
+                this.handleG_SETTILE(hi, lo);
+                break;
+            case 0xF2: // G_SETTILESIZE
+            case 0x32: // RDP SETTILESIZE
+                this.handleG_SETTILESIZE(hi, lo);
+                break;
+            case 0xF4: // G_LOADTILE
+            case 0x34: // RDP LOADTILE
+                this.handleG_LOADTILE(hi, lo);
+                break;
+            case 0xF3: // G_LOADBLOCK
+            case 0x33: // RDP LOADBLOCK
+                this.handleG_LOADBLOCK(hi, lo);
+                break;
+            case 0xFC: // G_SETCOMBINE
+            case 0x3C: // RDP SETCOMBINE
+                this.rspState.combine.hi = hi & 0xFFFFFF;
+                this.rspState.combine.lo = lo;
+                // If any of the color sources is TEXEL0 or TEXEL1
+                this.rspState.useTexture = ((hi & 0x00F00000) !== 0) || ((lo & 0x000000F0) !== 0);
+                break;
+            case 0xF6: // G_FILLRECT
+            case 0x36: // RDP FILLRECT
+                this.handleG_FILLRECT(hi, lo);
+                if ((this.rdpCommandCount & 0xFF) === 0) {
+                    console.log(`G_FILLRECT: x1=${(hi >>> 12) & 0xFFF} y1=${hi & 0xFFF} x2=${(lo >>> 12) & 0xFFF} y2=${lo & 0xFFF}`);
+                }
+                break;
+            case 0xF7: // G_SETFILLCOLOR
+            case 0x37: // RDP SETFILLCOLOR
+                this.rspState.fillColor = lo;
+                if ((this.rdpCommandCount & 0xFF) === 0) {
+                    console.log(`G_SETFILLCOLOR: 0x${lo.toString(16)}`);
+                }
+                break;
+            case 0xE2: // G_SETOTHERMODE_L
+            case 0xB9: // G_SETOTHERMODE_L (F3DEX)
+            case 0x2F: // RDP SETOTHERMODE
+                this.rspState.otherModeLo = lo;
+                break;
+            case 0xE3: // G_SETOTHERMODE_H
+            case 0xBA: // G_SETOTHERMODE_H (F3DEX)
+                this.rspState.otherModeHi = lo;
+                break;
+            case 0xE4: // G_TEXRECT
+            case 0xE5: // G_TEXRECTFLIP
+            case 0x24: // RDP TEXRECT
+            case 0x25: // RDP TEXRECTFLIP
+                {
+                    const x2 = (hi >>> 12) & 0xFFF;
+                    const y2 = hi & 0xFFF;
+                    const tile = (lo >>> 24) & 0x7;
+                    const x1 = (lo >>> 12) & 0xFFF;
+                    const y1 = lo & 0xFFF;
+
+                    // Note: In RDP command stream, subsequent words are at pc+8, pc+16
+                    // In RSP display list, they might be at pc+8, pc+16 too if it's a multi-word command.
+                    const w2lo = rdramView.getUint32((pc + 12) & 0x7FFFFF, false);
+                    const w3lo = rdramView.getUint32((pc + 20) & 0x7FFFFF, false);
+
+                    const s = (w2lo >>> 16) & 0xFFFF;
+                    const t = w2lo & 0xFFFF;
+                    const dsdx = (w3lo >>> 16) & 0xFFFF;
+                    const dtdy = w3lo & 0xFFFF;
+
+                    this.drawTextureRect(x1/4.0, y1/4.0, x2/4.0, y2/4.0, s, t, dsdx, dtdy, tile, (cmd === 0xE5 || cmd === 0x25));
+                }
+                break;
+            case 0xBB: // G_TEXTURE
+                this.rspState.textureScaleS = (lo >>> 16) / 65536.0;
+                this.rspState.textureScaleT = (lo & 0xFFFF) / 65536.0;
+                this.rspState.currentTile = (hi >>> 8) & 0x7;
+                break;
+            case 0xFA: // G_SETPRIMCOLOR
+            case 0x3A: // RDP SETPRIMCOLOR
+                this.rspState.primColor = lo;
+                break;
+            case 0xFB: // G_SETENVCOLOR
+            case 0x3B: // RDP SETENVCOLOR
+                this.rspState.envColor = lo;
+                break;
+            case 0x27: // RDP Sync Full
+            case 0xE8: // G_DPFULLSYNC
+                this.mmu.miRegisters[2] |= 0x20; // DP Interrupt
+                break;
+            default:
+                if (!this.warnedCommands.has(cmd)) {
+                    console.warn(`Unknown RSP/RDP Command: 0x${cmd.toString(16).padStart(2, '0')}`);
+                    this.warnedCommands.add(cmd);
+                }
+                break;
         }
     }
 
@@ -543,11 +565,16 @@ class RCP {
     handleG_SETTILE(hi, lo) {
         const tile = (lo >>> 24) & 0x7;
         if (tile < 8) {
-            this.rspState.tiles[tile].format = (hi >>> 21) & 0x7;
-            this.rspState.tiles[tile].size = (hi >>> 19) & 0x3;
-            this.rspState.tiles[tile].line = (hi >>> 9) & 0x1FF;
-            this.rspState.tiles[tile].tmem = hi & 0x1FF;
-            this.rspState.tiles[tile].palette = (lo >>> 20) & 0xF;
+            const t = this.rspState.tiles[tile];
+            t.format = (hi >>> 21) & 0x7;
+            t.size = (hi >>> 19) & 0x3;
+            t.line = (hi >>> 9) & 0x1FF;
+            t.tmem = hi & 0x1FF;
+            t.palette = (lo >>> 20) & 0xF;
+            t.maskT = (lo >>> 14) & 0x0F;
+            t.shiftT = (lo >>> 10) & 0x0F;
+            t.maskS = (lo >>> 4) & 0x0F;
+            t.shiftS = (lo >>> 0) & 0x0F;
         }
     }
 
@@ -638,18 +665,64 @@ class RCP {
         }
     }
 
+    drawTextureRect(x1, y1, x2, y2, s, t, dsdx, dtdy, tileIdx, flip) {
+        if ((this.rdpCommandCount & 0x3FF) === 0) {
+             console.log(`G_TEXRECT: (${x1},${y1}) to (${x2},${y2}) tile=${tileIdx} s=${s} t=${t} dsdx=${dsdx} dtdy=${dtdy}`);
+        }
+        const addr = this.rspState.colorImage;
+        if (!addr) return;
+        const width = this.rspState.colorImageWidth;
+        const rdramView = new DataView(this.mmu.memory.rdram);
+        const tile = this.rspState.tiles[tileIdx];
+
+        const startX = Math.max(0, Math.floor(x1));
+        const startY = Math.max(0, Math.floor(y1));
+        const endX = Math.min(width, Math.ceil(x2));
+        const endY = Math.min(240, Math.ceil(y2));
+
+        for (let y = startY; y < endY; y++) {
+            for (let x = startX; x < endX; x++) {
+                const curS = s + (x - x1) * (dsdx / 1024.0);
+                const curT = t + (y - y1) * (dtdy / 1024.0);
+
+                const texel0 = this.sampleTexture(tile, curS, curT);
+                if (texel0.a === 0 && (this.rspState.otherModeLo & 0x4000)) continue;
+
+                let color;
+                if (this.cycleMode === 3) {
+                    color = texel0;
+                } else {
+                    color = this.combineColor({r:255,g:255,b:255,a:255}, texel0, {r:255,g:255,b:255,a:255});
+                }
+
+                const size = this.rspState.colorImageSize;
+                const pAddr = (addr + (y * width + x) * (size === 3 ? 4 : 2)) & 0x7FFFFF;
+                if (size === 2) {
+                    const color16 = (((color.r >> 3) & 0x1F) << 11) | (((color.g >> 3) & 0x1F) << 6) | (((color.b >> 3) & 0x1F) << 1) | 1;
+                    if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) rdramView.setUint16(pAddr, color16, false);
+                } else if (size === 3) {
+                    const color32 = ((color.r & 0xFF) << 24) | ((color.g & 0xFF) << 16) | ((color.b & 0xFF) << 8) | 255;
+                    if (pAddr + 4 <= this.mmu.memory.rdram.byteLength) rdramView.setUint32(pAddr, color32, false);
+                }
+            }
+        }
+    }
+
     handleG_FILLRECT(hi, lo) {
-        const x1 = (hi >>> 12) & 0xFFF;
-        const y1 = (hi >>> 0) & 0xFFF;
-        const x2 = (lo >>> 12) & 0xFFF;
-        const y2 = (lo >>> 0) & 0xFFF;
+        let x1 = (hi >>> 12) & 0xFFF;
+        let y1 = (hi >>> 0) & 0xFFF;
+        let x2 = (lo >>> 12) & 0xFFF;
+        let y2 = (lo >>> 0) & 0xFFF;
+
+        // Coordinates are 10.2 fixed point for some RDP commands,
+        // but for FILLRECT they are often reported as 12.0 in some docs.
+        // Let's check if they seem to be 10.2 (i.e. > screen size)
+        if (x2 > 1024 || y2 > 1024) {
+             x1 /= 4.0; y1 /= 4.0; x2 /= 4.0; y2 /= 4.0;
+        }
 
         const addr = this.rspState.colorImage;
-        if ((this.mmu.cpu.instructionCount & 0xFFF) === 0) {
-             console.log(`G_FILLRECT: (0x${x1.toString(16)}, 0x${y1.toString(16)}) to (0x${x2.toString(16)}, 0x${y2.toString(16)}) Color=0x${this.rspState.fillColor.toString(16)} Addr=0x${addr ? addr.toString(16) : 'NULL'}`);
-        }
         if (!addr) return;
-        // console.log(`G_FILLRECT: (0x${x1.toString(16)}, 0x${y1.toString(16)}) to (0x${x2.toString(16)}, 0x${y2.toString(16)}) Color=0x${this.rspState.fillColor.toString(16)} Addr=0x${addr.toString(16)}`);
 
         const rdramView = new DataView(this.mmu.memory.rdram);
         const size = this.rspState.colorImageSize; // 2: 16-bit, 3: 32-bit
@@ -683,7 +756,155 @@ class RCP {
         }
     }
 
+    sampleTexture(tile, s, t) {
+        // s and t are in 10.5 fixed point (units of 1/32 texel)
+        let ss = Math.floor(s / 32.0);
+        let tt = Math.floor(t / 32.0);
+
+        // Apply shift
+        if (tile.shiftS) {
+            if (tile.shiftS > 10) ss <<= (16 - tile.shiftS);
+            else ss >>= tile.shiftS;
+        }
+        if (tile.shiftT) {
+            if (tile.shiftT > 10) tt <<= (16 - tile.shiftT);
+            else tt >>= tile.shiftT;
+        }
+
+        // Apply mask
+        if (tile.maskS) ss &= (1 << tile.maskS) - 1;
+        if (tile.maskT) tt &= (1 << tile.maskT) - 1;
+
+        const sizeBytes = [0.5, 1, 2, 4][tile.size];
+        const lineBytes = tile.line * 8;
+        const texelAddr = (tile.tmem * 8) + (tt * lineBytes);
+        const ts = ss;
+
+        let r=255, g=255, b=255, a=255;
+
+        if (tile.format === 0) { // RGBA
+            if (tile.size === 2) { // 16-bit
+                const addr = texelAddr + ts * 2;
+                if (addr + 2 <= 4096) {
+                    const val = (this.tmem[addr] << 8) | this.tmem[addr + 1];
+                    r = ((val >> 11) & 0x1F) << 3;
+                    g = ((val >> 6) & 0x1F) << 3;
+                    b = ((val >> 1) & 0x1F) << 3;
+                    a = (val & 1) ? 255 : 0;
+                }
+            } else if (tile.size === 3) { // 32-bit
+                const addr = texelAddr + ts * 4;
+                if (addr + 4 <= 4096) {
+                    r = this.tmem[addr]; g = this.tmem[addr+1]; b = this.tmem[addr+2]; a = this.tmem[addr+3];
+                }
+            }
+        } else if (tile.format === 2) { // CI
+            let idx = 0;
+            if (tile.size === 1) { // 8-bit
+                idx = this.tmem[texelAddr + ts] || 0;
+            } else if (tile.size === 0) { // 4-bit
+                idx = this.tmem[texelAddr + (ts >> 1)] || 0;
+                if (!(ts & 1)) idx >>= 4;
+                idx = (idx & 0x0F) + (tile.palette << 4);
+            }
+            const palAddr = 2048 + idx * 2;
+            if (palAddr + 2 <= 4096) {
+                const val = (this.tmem[palAddr] << 8) | this.tmem[palAddr+1];
+                r = ((val >> 11) & 0x1F) << 3; g = ((val >> 6) & 0x1F) << 3; b = ((val >> 1) & 0x1F) << 3; a = (val & 1) ? 255 : 0;
+            }
+        } else if (tile.format === 3) { // IA
+            if (tile.size === 1) { // 8-bit
+                const val = this.tmem[texelAddr + ts] || 0;
+                r = g = b = (val >> 4) * 17; a = (val & 0x0F) * 17;
+            } else if (tile.size === 0) { // 4-bit
+                let val = this.tmem[texelAddr + (ts >> 1)] || 0;
+                if (!(ts & 1)) val >>= 4;
+                r = g = b = (val >> 1) * 36; a = (val & 1) * 255;
+            }
+        } else if (tile.format === 4) { // I
+            let val = 0;
+            if (tile.size === 1) val = this.tmem[texelAddr + ts] || 0;
+            else if (tile.size === 0) {
+                val = this.tmem[texelAddr + (ts >> 1)] || 0;
+                if (!(ts & 1)) val >>= 4;
+                val = (val & 0x0F) * 17;
+            }
+            r = g = b = a = val;
+        }
+        return {r, g, b, a};
+    }
+
+    combineColor(shade, texel0, texel1) {
+        const prim = {
+            r: (this.rspState.primColor >>> 24) & 0xFF,
+            g: (this.rspState.primColor >>> 16) & 0xFF,
+            b: (this.rspState.primColor >>> 8) & 0xFF,
+            a: this.rspState.primColor & 0xFF
+        };
+        const env = {
+            r: (this.rspState.envColor >>> 24) & 0xFF,
+            g: (this.rspState.envColor >>> 16) & 0xFF,
+            b: (this.rspState.envColor >>> 8) & 0xFF,
+            a: this.rspState.envColor & 0xFF
+        };
+
+        const hi = this.rspState.combine.hi;
+        const lo = this.rspState.combine.lo;
+
+        const a_src = (hi >>> 20) & 0x0F;
+        const b_src = (hi >>> 15) & 0x1F;
+        const c_src = (hi >>> 10) & 0x1F;
+        const d_src = (hi >>> 6) & 0x0F;
+
+        const aa_src = (lo >>> 18) & 0x07;
+        const ab_src = (lo >>> 15) & 0x07;
+        const ac_src = (lo >>> 12) & 0x07;
+        const ad_src = (lo >>> 9) & 0x07;
+
+        const getRGB = (src) => {
+            switch(src) {
+                case 1: return texel0;
+                case 2: return texel1;
+                case 3: return prim;
+                case 4: return shade;
+                case 5: return env;
+                default: return { r: 0, g: 0, b: 0 };
+            }
+        };
+
+        const getAlpha = (src) => {
+            switch(src) {
+                case 1: return texel0.a;
+                case 2: return texel1.a;
+                case 3: return prim.a;
+                case 4: return shade.a;
+                case 5: return env.a;
+                default: return 0;
+            }
+        };
+
+        const a = getRGB(a_src);
+        const b = getRGB(b_src);
+        const c = getRGB(c_src);
+        const d = getRGB(d_src);
+
+        const aa = getAlpha(aa_src);
+        const ab = getAlpha(ab_src);
+        const ac = getAlpha(ac_src);
+        const ad = getAlpha(ad_src);
+
+        return {
+            r: Math.max(0, Math.min(255, (a.r - b.r) * (c.r / 255.0) + d.r)),
+            g: Math.max(0, Math.min(255, (a.g - b.g) * (c.g / 255.0) + d.g)),
+            b: Math.max(0, Math.min(255, (a.b - b.b) * (c.b / 255.0) + d.b)),
+            a: Math.max(0, Math.min(255, (aa - ab) * (ac / 255.0) + ad))
+        };
+    }
+
     drawTriangle(v1, v2, v3) {
+        if ((this.rdpCommandCount & 0x3FF) === 0) {
+            console.log(`DrawTriangle: (${v1.x},${v1.y}) (${v2.x},${v2.y}) (${v3.x},${v3.y})`);
+        }
         const addr = this.rspState.colorImage;
         if (!addr) return;
 
@@ -699,19 +920,12 @@ class RCP {
         const rdramView = new DataView(this.mmu.memory.rdram);
         const tileIdx = this.rspState.currentTile;
         const tile = this.rspState.tiles[tileIdx];
+        const isCopyMode = (this.cycleMode === 3);
         const width = this.rspState.colorImageWidth;
         const zAddr = this.rspState.depthImage;
 
         const zCmp = (this.rspState.otherModeLo & 0x10);
         const zUpd = (this.rspState.otherModeLo & 0x20);
-
-        // Decode Prim/Env colors
-        const pr = (this.rspState.primColor >>> 24) & 0xFF;
-        const pg = (this.rspState.primColor >>> 16) & 0xFF;
-        const pb = (this.rspState.primColor >>> 8) & 0xFF;
-        const er = (this.rspState.envColor >>> 24) & 0xFF;
-        const eg = (this.rspState.envColor >>> 16) & 0xFF;
-        const eb = (this.rspState.envColor >>> 8) & 0xFF;
 
         for (let y = minY; y <= maxY; y++) {
             if (y < 0 || y >= 240) continue;
@@ -719,83 +933,47 @@ class RCP {
                 if (x < 0 || x >= width) continue;
                 const weights = this.getBarycentricWeights(x, y, x1, y1, x2, y2, x3, y3);
                 if (weights) {
-                    // Z-Buffer check
                     const z = v1.z * weights.s + v2.z * weights.t + v3.z * weights.u;
                     if (zCmp && zAddr) {
                         const pzAddr = (zAddr + (y * width + x) * 2) & 0x7FFFFF;
                         const oldZ = rdramView.getUint16(pzAddr, false);
-                        if (z < oldZ) { // Simplified Z-test
+                        if (z < oldZ) {
                             if (zUpd) rdramView.setUint16(pzAddr, Math.max(0, Math.min(0xFFFF, z)), false);
                         } else {
                             continue;
                         }
                     }
 
-                    // Vertex color
-                    const vr = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
-                    const vg = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
-                    const vb = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+                    const shade = {
+                        r: v1.r * weights.s + v2.r * weights.t + v3.r * weights.u,
+                        g: v1.g * weights.s + v2.g * weights.t + v3.g * weights.u,
+                        b: v1.b * weights.s + v2.b * weights.t + v3.b * weights.u,
+                        a: v1.a * weights.s + v2.a * weights.t + v3.a * weights.u
+                    };
 
-                    let r = vr, g = vg, b = vb;
-
+                    let texel0 = { r: 255, g: 255, b: 255, a: 255 };
                     if (this.rspState.useTexture && this.rspState.textureImage !== 0) {
-                        // Texture coordinates
                         const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
                         const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
-
-                        // Improved texture sampling (Point sampling, 16-bit RGBA)
-                        const texS = Math.floor(s / 32.0);
-                        const texT = Math.floor(t / 32.0);
-
-                        const maskS = (1 << ((this.rspState.otherModeHi >> 14) & 0xF)); // Simplified mask
-                        const maskT = (1 << ((this.rspState.otherModeHi >> 4) & 0xF));
-
-                        // Use tile line for wrapping
-                        const wrapS = (tile.line * 8) / 2; // Width in pixels for 16-bit
-                        const wrapT = 64; // Fallback
-
-                        const ts = Math.abs(texS) % (wrapS || 32);
-                        const tt = Math.abs(texT) % wrapT;
-
-                        const lineBytes = tile.line * 8;
-                        const texAddr = (tile.tmem * 8) + (tt * lineBytes + ts * 2);
-
-                        if (texAddr + 2 <= 4096) {
-                            const val = (this.tmem[texAddr] << 8) | this.tmem[texAddr + 1];
-                            const tr = ((val >> 11) & 0x1F) << 3;
-                            const tg = ((val >> 6) & 0x1F) << 3;
-                            const tb = ((val >> 1) & 0x1F) << 3;
-                            const ta = (val & 1) ? 255 : 0;
-
-                            // Alpha Testing (Simplified: if ta is 0, skip pixel if alpha test enabled)
-                            if (ta === 0 && (this.rspState.otherModeLo & 0x4000)) continue;
-
-                            // Color Combiner Simulation (Simplified)
-                            // SM64 often uses (TEXEL0 * SHADE) or (TEXEL0 * PRIMITIVE)
-                            const comboHi = this.rspState.combine.hi;
-                            if ((comboHi & 0xF00) === 0x100) { // TEXEL0 * SHADE (Vertex Color)
-                                r = (tr * vr) / 255; g = (tg * vg) / 255; b = (tb * vb) / 255;
-                            } else if ((comboHi & 0xF00) === 0x300) { // TEXEL0 * PRIMITIVE
-                                r = (tr * pr) / 255; g = (tg * pg) / 255; b = (tb * pb) / 255;
-                            } else {
-                                r = tr; g = tg; b = tb;
-                            }
-                        }
+                        texel0 = this.sampleTexture(tile, s, t);
+                        if (texel0.a === 0 && (this.rspState.otherModeLo & 0x4000)) continue;
                     }
 
+                    let color;
+                    if (isCopyMode) {
+                        color = texel0;
+                    } else {
+                        color = this.combineColor(shade, texel0, {r:255,g:255,b:255,a:255});
+                    }
                     const size = this.rspState.colorImageSize;
                     if (size === 2) {
-                        const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | ((r+g+b > 0) ? 1 : 0);
+                        const color16 = (((color.r >> 3) & 0x1F) << 11) | (((color.g >> 3) & 0x1F) << 6) | (((color.b >> 3) & 0x1F) << 1) | 1;
                         const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
-                        if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
-                            rdramView.setUint16(pAddr, color16, false);
-                        }
+                        if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) rdramView.setUint16(pAddr, color16, false);
                     } else if (size === 3) {
-                        const color32 = ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | 255;
+                        const color32 = ((color.r & 0xFF) << 24) | ((color.g & 0xFF) << 16) | ((color.b & 0xFF) << 8) | 255;
                         const pAddr = (addr + (y * width + x) * 4) & 0x7FFFFF;
-                        if (pAddr + 4 <= this.mmu.memory.rdram.byteLength) {
-                            rdramView.setUint32(pAddr, color32, false);
-                        }
+                        if (pAddr + 4 <= this.mmu.memory.rdram.byteLength) rdramView.setUint32(pAddr, color32, false);
                     }
                 }
             }

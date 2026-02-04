@@ -1033,10 +1033,11 @@ class CPU {
         }
         this.pc = vector;
         this.exceptionRaised = true;
-        if (code !== 0) {
-            const instruction = this.mmu.read32(Number(pc));
-            console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')}) EXL=${status & 2n}`);
-        }
+
+        // Log all exceptions including interrupts (code 0)
+        const instr = this.mmu.read32(Number(pc & 0xFFFFFFFFn));
+        console.log(`Exception ${code} at PC 0x${(pc & 0xFFFFFFFFn).toString(16)} Instr 0x${instr.toString(16).padStart(8, '0')} Target 0x${vector.toString(16)} Count ${this.instructionCount}`);
+
         return null;
     }
 }

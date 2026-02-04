@@ -234,7 +234,12 @@ class MMU {
              console.log(`HW Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
         }
 
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write32(physicalAddress, value);
+        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) {
+            if (physicalAddress < 0x400 && value !== 0) {
+                 console.log(`RDRAM Write to vectors: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)} PC=0x${this.cpu.pc.toString(16)}`);
+            }
+            this.memory.write32(physicalAddress, value);
+        }
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint32(physicalAddress - MMU.SP_DMEM_START, value, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint32(physicalAddress - MMU.SP_IMEM_START, value, false);
         else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
@@ -398,10 +403,13 @@ class MMU {
 
     doPiDma(cartToDram) {
         const ramAddr = this.piRegisters[0] & 0x007FFFFF; // Mask for 8MB RDRAM
-        const cartAddr = this.piRegisters[1] & 0x1FFFFFFF;
+        const cartAddrRaw = this.piRegisters[1];
+        const cartAddr = cartAddrRaw & 0x1FFFFFFF;
         const length = ((cartToDram ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
-        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Raw: 0x${this.piRegisters[1].toString(16)}) Len=0x${length.toString(16)}`);
+        if (length > 16) {
+            console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Raw: 0x${this.piRegisters[1].toString(16)}) Len=0x${length.toString(16)} PC=0x${this.cpu.pc.toString(16)}`);
+        }
         this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
 
         if (cartToDram && this.memory.rom) {
@@ -425,11 +433,30 @@ class MMU {
                 romOffset = cartAddr;
             }
 
-            for (let i = 0; i < length; i++) {
-                const dst = ramAddr + i;
-                const src = (romOffset + i) % romSize;
-                if (dst < rdramView.length) {
-                    rdramView[dst] = romView[src];
+            // Super Mario 64 PAL / Europe specific fix:
+            // It tries to DMA from Domain 2 (0x08000000 range) or other mirrors to RDRAM 0x0.
+            // Overwriting RDRAM 0x0 with 0xFF from ROM mirrors would crash the emulator by wiping vectors.
+            if (ramAddr < 0x1000 && length > 0x100) {
+                 console.log(`PI DMA to vector area: RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddrRaw.toString(16)} Len=0x${length.toString(16)}`);
+                 // If it's a large DMA from a mirror/Domain 2, it's likely a memory wipe.
+                 // We ignore it to keep exception vectors intact for HLE.
+                 if (cartAddrRaw < 0x10000000 || (cartAddrRaw >= 0x08000000 && cartAddrRaw <= 0x0FFFFFFF)) {
+                     console.log("PI DMA: IGNORING transfer (SM64 PAL memory wipe fix)");
+                 } else {
+                     console.log("PI DMA: PROCEEDING with transfer to vectors!");
+                     for (let i = 0; i < length; i++) {
+                        const dst = ramAddr + i;
+                        const src = (romOffset + i) % romSize;
+                        if (dst < rdramView.length) rdramView[dst] = romView[src];
+                     }
+                 }
+            } else {
+                for (let i = 0; i < length; i++) {
+                    const dst = ramAddr + i;
+                    const src = (romOffset + i) % romSize;
+                    if (dst < rdramView.length) {
+                        rdramView[dst] = romView[src];
+                    }
                 }
             }
             const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
