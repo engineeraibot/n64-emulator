@@ -409,37 +409,33 @@ class MMU {
             const romView = new Uint8Array(this.memory.rom);
             const romSize = this.memory.rom.byteLength;
 
-            // N64 Cartridge ROM is mapped to Domain 1 (starting at 0x10000000).
-            // However, many games and IPL3 versions use mirrors or different domains.
-            // A common robust approach is to use the lower 28 bits as offset and mirror by ROM size.
-            let romOffset = cartAddr & 0x0FFFFFFF;
-            if (cartAddr >= 0x10000000 && cartAddr <= 0x1FBFFFFF) {
-                romOffset = cartAddr - 0x10000000;
-            } else if (cartAddr >= 0x06000000 && cartAddr <= 0x07FFFFFF) {
-                romOffset = cartAddr - 0x06000000;
-            } else if (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF) {
-                // SRAM/Flash or Domain 2 mirror
-                romOffset = cartAddr - 0x08000000;
-            } else if (cartAddr < 0x05000000) {
-                // Mirror used by some games (like SM64 PAL)
-                romOffset = cartAddr;
-            }
+            // Use lower 28 bits as offset and apply mirroring by ROM size.
+            // This handles standard Domain 1 (0x10000000) and various mirrors (Domain 2, etc.)
+            const romOffsetBase = cartAddr & 0x0FFFFFFF;
 
             // Safeguard for SM64 PAL: prevent overwriting exception vectors with junk
-            const isDomain2Mirror = (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF) || (cartAddr < 0x05000000);
-            if (ramAddr < 0x1000 && length > 0x100 && isDomain2Mirror) {
+            // On real hardware, out-of-bounds Domain 2 reads often return 0 or 0xFF.
+            // Some bootloaders do a PI DMA from 0x0 in Domain 2 which would overwrite RDRAM 0.
+            const isPotentialJunkMirror = (cartAddr < 0x05000000) || (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF);
+            const isOutOfBounds = (romOffsetBase >= romSize);
+
+            if (ramAddr < 0x1000 && length > 0x100 && isPotentialJunkMirror && isOutOfBounds) {
                 console.warn(`PI DMA: Ignoring potential junk transfer to exception vectors! RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} Len=0x${length.toString(16)}`);
             } else {
                 for (let i = 0; i < length; i++) {
                     const dst = ramAddr + i;
-                    const src = romOffset + i;
+                    let src = romOffsetBase + i;
+                    // Apply mirroring if out of bounds
+                    if (src >= romSize) {
+                        src = src % romSize;
+                    }
                     if (dst < rdramView.length) {
-                        rdramView[dst] = (src < romSize) ? romView[src] : 0;
+                        rdramView[dst] = romView[src];
                     }
                 }
             }
             const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
-            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffset.toString(16)}). First 16 bytes: ${firstBytes}`);
+            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}). First 16 bytes: ${firstBytes}`);
         }
 
         // Simulate DMA delay (More realistic timing for PI DMA)

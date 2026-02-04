@@ -499,11 +499,11 @@ class RCP {
         let num, dest;
         const cmd = (hi >>> 24) & 0xFF;
         if (cmd === 0x04) { // Fast3D (SM64)
-            num = (hi >>> 8) & 0xFF;
-            dest = (hi >>> 16) & 0xFF;
+            num = (hi >>> 16) & 0xFF;
+            dest = ((hi >>> 8) & 0xFF) >> 4;
         } else {
-            num = (hi >>> 12) & 0xFF;
-            dest = (hi & 0xFF) / 2;
+            num = (hi >>> 16) & 0xFF;
+            dest = (hi & 0xFF);
         }
         const addr = this.resolveAddress(lo);
         const rdramView = new DataView(this.mmu.memory.rdram);
