@@ -1,0 +1,4 @@
+node_modules/
+*.png
+verify_output*.txt
+squares_output*.txt

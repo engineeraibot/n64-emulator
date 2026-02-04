@@ -4,11 +4,13 @@ class RCP {
         this.mmu = mmu;
         this.framebuffer = framebuffer;
         this.tmem = new Uint8Array(4096);
+        this.rdpCommandCount = 0;
         this.reset();
     }
 
     reset() {
         console.log("RCP Reset");
+        this.rdpCommandCount = 0;
         if (this.mmu) {
             this.mmu.spRegisters[4] = 0x01; // RSP Halted
             this.mmu.miRegisters[2] = 0;    // No interrupts
@@ -109,7 +111,11 @@ class RCP {
     }
 
     executeRdpCommand(hi, lo) {
+        this.rdpCommandCount++;
         const cmd = (hi >>> 24) & 0x3F;
+        if ((this.rdpCommandCount & 0x3FF) === 0) {
+            console.log(`RDP Command: 0x${cmd.toString(16)} (Total: ${this.rdpCommandCount})`);
+        }
         switch (cmd) {
             case 0x2F: // Set Other Modes
                 break;
@@ -155,6 +161,7 @@ class RCP {
         // OSTask structure is usually at SP_DMEM 0xFC0
         const taskPtr = 0xFC0;
         const type = this.mmu.spDmemView.getUint32(taskPtr + 0x00, false);
+        console.log(`RSP Task Triggered: Type=${type} (SP_STATUS=0x${this.mmu.spRegisters[4].toString(16)})`);
         const flags = this.mmu.spDmemView.getUint32(taskPtr + 0x04, false);
         const ucode = this.mmu.spDmemView.getUint32(taskPtr + 0x10, false);
 
@@ -209,6 +216,7 @@ class RCP {
     }
 
     processDisplayList(addr) {
+        console.log(`Processing Display List at 0x${addr.toString(16)}`);
         this.rspState = {
             segments: new Uint32Array(16),
             vertices: new Array(32).fill(0).map(() => ({ x: 0, y: 0, z: 0, w: 1, r: 0, g: 0, b: 0, a: 0, s: 0, t: 0 })),
@@ -312,6 +320,7 @@ class RCP {
                     this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
                     this.rspState.colorImageFormat = (hi >>> 21) & 0x7;
                     this.rspState.colorImageSize = (hi >>> 19) & 0x3;
+                    console.log(`G_SETCIMG: Addr=0x${this.rspState.colorImage.toString(16)} Width=${this.rspState.colorImageWidth} Format=${this.rspState.colorImageFormat} Size=${this.rspState.colorImageSize}`);
                     break;
                 case 0xFE: // G_SETZIMG
                     this.rspState.depthImage = this.resolveAddress(lo);
@@ -336,6 +345,7 @@ class RCP {
                     break;
                 case 0xF6: // G_FILLRECT
                     this.handleG_FILLRECT(hi, lo);
+                    // console.log(`G_FILLRECT: 0x${hi.toString(16)} 0x${lo.toString(16)}`);
                     break;
                 case 0xF7: // G_SETFILLCOLOR
                     this.rspState.fillColor = lo;
@@ -355,8 +365,16 @@ class RCP {
                 case 0xED: // G_SETSCISSOR
                     break;
                 case 0xFA: // G_SETPRIMCOLOR
+                    this.rspState.primColor = lo;
                     break;
                 case 0xFB: // G_SETENVCOLOR
+                    this.rspState.envColor = lo;
+                    break;
+                case 0xF9: // G_SETBLENDCOLOR
+                    this.rspState.blendColor = lo;
+                    break;
+                case 0xF8: // G_SETFOGCOLOR
+                    this.rspState.fogColor = lo;
                     break;
                 case 0xE7: // G_DPPIPESYNC
                 case 0xE6: // G_RDPLOADSYNC
@@ -403,12 +421,20 @@ class RCP {
             const tz = x * mvp[2] + y * mvp[6] + z * mvp[10] + mvp[14];
             const tw = x * mvp[3] + y * mvp[7] + z * mvp[11] + mvp[15];
 
-            // Simple Viewport Transformation (assuming 320x240)
+            // Viewport Transformation
             let screenX = 160;
             let screenY = 120;
+            let screenZ = tz;
             if (Math.abs(tw) > 0.0001) {
-                screenX = (tx / tw) * 160 + 160;
-                screenY = -(ty / tw) * 120 + 120;
+                if (this.rspState.viewport) {
+                    const vp = this.rspState.viewport;
+                    screenX = (tx / tw) * vp.scale[0] + vp.trans[0];
+                    screenY = (-(ty / tw) * vp.scale[1] + vp.trans[1]);
+                    screenZ = (tz / tw) * vp.scale[2] + vp.trans[2];
+                } else {
+                    screenX = (tx / tw) * 160 + 160;
+                    screenY = -(ty / tw) * 120 + 120;
+                }
             }
 
             const s = rdramView.getInt16(vAddr + 8, false);
@@ -470,6 +496,7 @@ class RCP {
         const rdramView = new DataView(this.mmu.memory.rdram);
         if (index === 0x01) { // G_MV_VIEWPORT
             const vAddr = addr & 0x7FFFFF;
+            console.log(`G_MOVEMEM: Viewport at 0x${addr.toString(16)}`);
             if (vAddr + 16 <= rdramView.byteLength) {
                 this.rspState.viewport = {
                     scale: [
@@ -586,10 +613,14 @@ class RCP {
         const y2 = (lo >>> 0) & 0xFFF;
 
         const addr = this.rspState.colorImage;
+        if ((this.mmu.cpu.instructionCount & 0xFFF) === 0) {
+             console.log(`G_FILLRECT: (0x${x1.toString(16)}, 0x${y1.toString(16)}) to (0x${x2.toString(16)}, 0x${y2.toString(16)}) Color=0x${this.rspState.fillColor.toString(16)} Addr=0x${addr ? addr.toString(16) : 'NULL'}`);
+        }
         if (!addr) return;
+        // console.log(`G_FILLRECT: (0x${x1.toString(16)}, 0x${y1.toString(16)}) to (0x${x2.toString(16)}, 0x${y2.toString(16)}) Color=0x${this.rspState.fillColor.toString(16)} Addr=0x${addr.toString(16)}`);
 
         const rdramView = new DataView(this.mmu.memory.rdram);
-        const color = (this.rspState.fillColor >>> 16) & 0xFFFF;
+        const size = this.rspState.colorImageSize; // 2: 16-bit, 3: 32-bit
 
         const startX = Math.floor(x1 / 4);
         const startY = Math.floor(y1 / 4);
@@ -597,11 +628,24 @@ class RCP {
         const endY = Math.floor(y2 / 4);
 
         const width = this.rspState.colorImageWidth;
-        for (let y = startY; y < endY; y++) {
-            for (let x = startX; x < endX; x++) {
-                const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
-                if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
-                    rdramView.setUint16(pAddr, color, false);
+        if (size === 2) {
+            const color = (this.rspState.fillColor >>> 16) & 0xFFFF;
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
+                    if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
+                        rdramView.setUint16(pAddr, color, false);
+                    }
+                }
+            }
+        } else if (size === 3) {
+            const color = this.rspState.fillColor;
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const pAddr = (addr + (y * width + x) * 4) & 0x7FFFFF;
+                    if (pAddr + 4 <= this.mmu.memory.rdram.byteLength) {
+                        rdramView.setUint32(pAddr, color, false);
+                    }
                 }
             }
         }
@@ -610,6 +654,7 @@ class RCP {
     drawTriangle(v1, v2, v3) {
         const addr = this.rspState.colorImage;
         if (!addr) return;
+        // console.log(`Drawing triangle to 0x${addr.toString(16)}`);
 
         const x1 = v1.x, y1 = v1.y;
         const x2 = v2.x, y2 = v2.y;
@@ -659,11 +704,19 @@ class RCP {
                         b = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
                     }
 
-                    const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
-
-                    const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
-                    if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
-                        rdramView.setUint16(pAddr, color16, false);
+                    const size = this.rspState.colorImageSize;
+                    if (size === 2) {
+                        const color16 = (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | 1;
+                        const pAddr = (addr + (y * width + x) * 2) & 0x7FFFFF;
+                        if (pAddr + 2 <= this.mmu.memory.rdram.byteLength) {
+                            rdramView.setUint16(pAddr, color16, false);
+                        }
+                    } else if (size === 3) {
+                        const color32 = ((r & 0xFF) << 24) | ((g & 0xFF) << 16) | ((b & 0xFF) << 8) | 255;
+                        const pAddr = (addr + (y * width + x) * 4) & 0x7FFFFF;
+                        if (pAddr + 4 <= this.mmu.memory.rdram.byteLength) {
+                            rdramView.setUint32(pAddr, color32, false);
+                        }
                     }
                 }
             }

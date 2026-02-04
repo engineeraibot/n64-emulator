@@ -94,10 +94,13 @@ class MMU {
         if (now >= this.viNextInterrupt) {
             if (!(this.miRegisters[2] & 0x08)) {
                 this.miRegisters[2] |= 0x08; // VI Interrupt
-                // console.log(`VI Interrupt Triggered at ${now}`);
+                // console.log(`VI Interrupt Triggered at Count ${now}`);
                 changed = true;
             }
-            this.viNextInterrupt = now + 5000000; // Slower for now to avoid storm
+            // Detect PAL vs NTSC for timing
+            const isPal = (this.viRegisters[6] > 600); // Usually 625 for PAL
+            const interval = isPal ? 1250000 : 1041666; // 50Hz or 60Hz
+            this.viNextInterrupt = now + interval;
         }
         if (changed) this.updateInterrupts();
     }
@@ -106,6 +109,7 @@ class MMU {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read8(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom8(physicalAddress - MMU.ROM_START);
+        else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom8(physicalAddress - 0x01000000); // Domain 2 mirror
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint8(physicalAddress - MMU.SP_DMEM_START);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint8(physicalAddress - MMU.SP_IMEM_START);
         return 0;
@@ -131,6 +135,7 @@ class MMU {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read16(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom16(physicalAddress - MMU.ROM_START);
+        else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom16(physicalAddress - 0x01000000);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint16(physicalAddress - MMU.SP_DMEM_START, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint16(physicalAddress - MMU.SP_IMEM_START, false);
         return 0;
@@ -164,12 +169,14 @@ class MMU {
         }
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read32(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom32(physicalAddress - MMU.ROM_START);
+        else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom32(physicalAddress - 0x01000000);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint32(physicalAddress - MMU.SP_DMEM_START, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint32(physicalAddress - MMU.SP_IMEM_START, false);
         else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
             const regIdx = (physicalAddress - MMU.VI_REGS_START) >> 2;
             if (regIdx === 4) { // VI_CURRENT_REG
-                return (Math.floor((this.cpu ? this.cpu.instructionCount : 0) / 2000) % 512);
+                const sync = this.viRegisters[6] || 525;
+                return (Math.floor((this.cpu ? this.cpu.instructionCount : 0) / 3000) % sync);
             }
             return this.viRegisters[regIdx];
         }
@@ -218,6 +225,12 @@ class MMU {
     }
     write32(address, value) {
         const physicalAddress = this.translateAddress(address);
+
+        // Detailed logging for hardware registers
+        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x0480001B) {
+             // console.log(`HW Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
+        }
+
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write32(physicalAddress, value);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint32(physicalAddress - MMU.SP_DMEM_START, value, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint32(physicalAddress - MMU.SP_IMEM_START, value, false);
@@ -237,10 +250,12 @@ class MMU {
         else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) this.handleMiWrite(physicalAddress, value);
         else if (physicalAddress >= MMU.SI_REGS_START && physicalAddress <= MMU.SI_REGS_END) this.handleSiWrite(physicalAddress, value);
         else if (physicalAddress >= MMU.SP_REGS_START && physicalAddress <= MMU.SP_REGS_END) {
+            console.log(`SP Reg Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
             if (this.rcp) this.rcp.handleSpWrite(physicalAddress, value);
             else this.spRegisters[(physicalAddress - MMU.SP_REGS_START) >> 2] = value;
         }
         else if (physicalAddress >= MMU.DPC_REGS_START && physicalAddress <= MMU.DPC_REGS_END) {
+            console.log(`DPC Reg Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
             if (this.rcp) this.rcp.handleDpcWrite(physicalAddress, value);
             else this.dpcRegisters[(physicalAddress - MMU.DPC_REGS_START) >> 2] = value;
         }
@@ -289,6 +304,7 @@ class MMU {
 
     handleSiWrite(address, value) {
         const regIdx = (address - MMU.SI_REGS_START) >> 2;
+        console.log(`SI Write: Reg ${regIdx} = 0x${value.toString(16)}`);
         if (regIdx === 6) { // SI_STATUS_REG
              this.miRegisters[2] &= ~0x02; // Clear SI interrupt
              this.updateInterrupts();
@@ -367,6 +383,10 @@ class MMU {
                     // Unknown command, skip it to avoid getting stuck
                     console.warn(`Unknown PIF Joybus command: 0x${cmd.toString(16)}`);
                 }
+                // Support for end-of-block marker
+                if (resIdx + recvLen < 64) {
+                    this.pifRam[resIdx + recvLen] = 0xFE;
+                }
                 i += 2 + sendLen + recvLen;
             }
             this.pifRam[0x3F] = 0;
@@ -408,11 +428,14 @@ class MMU {
                     rdramView[dst] = romView[src];
                 }
             }
-            console.log(`PI DMA Completed: copied ${length} bytes (with wrapping) to RAM 0x${ramAddr.toString(16)}`);
+            const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
+            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)}. First 16 bytes: ${firstBytes}`);
         }
 
-        // Simulate DMA delay
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + Math.floor(length / 4);
+        // Simulate DMA delay (More realistic timing for PI DMA)
+        // 5MB/s -> ~18 bytes per instruction at 93MHz
+        // Using a more conservative value (2 bytes per instruction) to ensure stability.
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + Math.floor(length / 2);
     }
 
     doSiDma(isToPif) {
@@ -432,7 +455,8 @@ class MMU {
                 if (ramAddr + i < rdramView.length) rdramView[ramAddr + i] = this.pifRam[i];
             }
         }
-        this.siBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 1000;
+        // SI DMA takes ~50k-100k instructions for 64 bytes
+        this.siBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 50000;
     }
     read64(address) {
         const physicalAddress = this.translateAddress(address);
