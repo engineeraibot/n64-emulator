@@ -272,6 +272,7 @@ class MMU {
 
     handleMiWrite(address, value) {
         const regIdx = (address - MMU.MI_REGS_START) >> 2;
+        if (regIdx === 2) return; // MI_INTR_REG is read-only
         if (regIdx === 0) { // MI_MODE_REG
             this.miRegisters[0] = (this.miRegisters[0] & ~0x7F) | (value & 0x7F);
             if (value & 0x0800) this.miRegisters[2] &= ~0x01; // Clear SP interrupt
@@ -428,18 +429,19 @@ class MMU {
             // Safeguard for SM64 PAL: prevent overwriting exception vectors with junk
             const isDomain2Mirror = (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF) || (cartAddr < 0x05000000);
             if (ramAddr < 0x1000 && length > 0x100 && isDomain2Mirror) {
-                console.warn(`PI DMA: Ignoring potential junk transfer to exception vectors! RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} Len=0x${length.toString(16)}`);
+                console.log(`PI DMA SAFEGUARD: Ignoring junk transfer to exception vectors! RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} Len=0x${length.toString(16)}`);
             } else {
                 for (let i = 0; i < length; i++) {
                     const dst = ramAddr + i;
-                    const src = romOffset + i;
+                    const src = (romOffset + i) % romSize;
                     if (dst < rdramView.length) {
-                        rdramView[dst] = (src < romSize) ? romView[src] : 0;
+                        rdramView[dst] = romView[src];
                     }
                 }
             }
             const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
-            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffset.toString(16)}). First 16 bytes: ${firstBytes}`);
+            const firstRomBytes = Array.from(romView.subarray(romOffset % romSize, (romOffset % romSize) + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
+            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffset.toString(16)}) romSize=${romSize}. First 16 bytes in RAM: ${firstBytes}. First 16 bytes in ROM at offset: ${firstRomBytes}`);
         }
 
         // Simulate DMA delay (More realistic timing for PI DMA)

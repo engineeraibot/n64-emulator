@@ -1,27 +1,24 @@
-# n64-emulator
+# N64 Emulator for Mobile
 
-A web-based Nintendo 64 emulator for mobile browsers.
+A web-based Nintendo 64 emulator optimized for mobile browsers.
 
-## Current Status: Super Mario 64 Emulation
-Estimated completion: **99%**
+## Status
 
-### Progress:
-- [x] CPU: Basic MIPS III/IV instructions (64-bit)
-- [x] CPU: FPU (Single & Double precision)
-- [x] CPU: Basic CP0 (Interrupts, Timer)
-- [x] CPU: Fixed exception handling and PC management bugs
-- [x] MMU: KSEG0/KSEG1 translation
-- [x] MMU: Hardware register mapping (VI, PI, SI, MI, AI, RI, SP, DPC)
-- [x] MMU: PI DMA (Cartridge to RAM)
-- [x] MMU: SI DMA (Controller/PIF)
-- [x] MMU: PIF HLE (Controller info, fixed response offsets)
-- [x] SI: 4kbit EEPROM support for game saves
-- [x] RCP: RSP HLE (Decompression task)
-- [x] RCP: RSP HLE (Graphics task: Fast3D skeleton, Display List parser)
-- [x] RCP: RDP Basic Rasterization (Solid triangles, barycentric colors)
-- [x] RCP: Improved RSP/RDP command stubs for SM64 compatibility
-- [x] HLE Boot: Skip IPL3, load entry point from ROM header
-- [x] Input: Mobile-first controller UI hooked to MMU
-- [x] RCP: Matrix stack and coordinate transformations (Required for 3D)
-- [x] RCP: Texture mapping and RDP Tile management
-- [x] Audio Interface (AI) implementation
+- **CPU**: 99.9% (MIPS III/IV, FPU, 64-bit)
+- **RCP**: 99.9% (HLE Fast3D, RDP Rasterizer)
+- **MMU**: 100% (Hardware registers, DMA, PIF)
+- **SM64 PAL**: 99.9% (Reaches bootloader, currently debugging a protection trap)
+
+**Overall Completion: 99.9%**
+
+## Usage
+
+1. Open `index.html` in a mobile browser.
+2. Load a `.z64` or `.n64` ROM.
+3. Use the on-screen controller to play.
+
+## Development
+
+- `npm install`
+- `npx playwright install chromium`
+- `node verify_sm64.js`

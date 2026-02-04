@@ -120,6 +120,13 @@ class CPU {
     step() {
         this.instructionCount++;
 
+        // Instruction alignment check
+        if (this.pc & 3n) {
+            console.error(`AdEL exception: misaligned PC 0x${this.pc.toString(16)}`);
+            this.raiseException(4, this.pc, false);
+            return;
+        }
+
         // Count register increments at half CPU frequency
         if ((this.instructionCount & 1) === 0) {
             this.cp0Registers[9] = (this.cp0Registers[9] + 1n) & 0xFFFFFFFFn;
@@ -319,8 +326,8 @@ class CPU {
             case 0x07: this.gpr[rd] = BigInt.asIntN(32, (BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn))); break;
             case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVZ
             case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break; // MOVN
-            case 0x0C: return this.raiseException(8, currentPc, isDelaySlot); // SYSCALL
-            case 0x0D: return this.raiseException(9, currentPc, isDelaySlot); // BREAK
+            case 0x0C: return this.raiseTrap(currentPc, isDelaySlot, 8); // SYSCALL
+            case 0x0D: return this.raiseTrap(currentPc, isDelaySlot, 9); // BREAK
             case 0x0E: break; // Unknown NOP used in SM64 PAL
             case 0x0F: break; // SYNC
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
@@ -401,12 +408,12 @@ class CPU {
             case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break; // DADDU
             case 0x2E:
             case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break; // DSUBU
-            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TGE
-            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, isDelaySlot); break; // TGEU
-            case 0x32: if (this.gpr[rs] < this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TLT
-            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, currentPc, isDelaySlot); break; // TLTU
-            case 0x34: if (this.gpr[rs] === this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TEQ
-            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) return this.raiseException(13, currentPc, isDelaySlot); break; // TNE
+            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TGE
+            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TGEU
+            case 0x32: if (this.gpr[rs] < this.gpr[rt]) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TLT
+            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TLTU
+            case 0x34: if (this.gpr[rs] === this.gpr[rt]) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TEQ
+            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TNE
             case 0x38: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << BigInt(sa)); break; // DSLL
             case 0x3A: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRL
             case 0x3B: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> BigInt(sa)); break; // DSRA
@@ -536,12 +543,12 @@ class CPU {
             case 0x13: if (this.gpr[rs] >= 0n) { taken = true; link = true; likely = true; } break; // BGEZALL
 
             // Traps
-            case 0x08: if (this.gpr[rs] >= imm) return this.raiseException(13, currentPc, isDelaySlot); break; // TGEI
-            case 0x09: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, imm)) return this.raiseException(13, currentPc, isDelaySlot); break; // TGEIU
-            case 0x0A: if (this.gpr[rs] < imm) return this.raiseException(13, currentPc, isDelaySlot); break; // TLTI
-            case 0x0B: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, imm)) return this.raiseException(13, currentPc, isDelaySlot); break; // TLTIU
-            case 0x0C: if (this.gpr[rs] === imm) return this.raiseException(13, currentPc, isDelaySlot); break; // TEQI
-            case 0x0E: if (this.gpr[rs] !== imm) return this.raiseException(13, currentPc, isDelaySlot); break; // TNEI
+            case 0x08: if (this.gpr[rs] >= imm) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TGEI
+            case 0x09: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, imm)) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TGEIU
+            case 0x0A: if (this.gpr[rs] < imm) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TLTI
+            case 0x0B: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, imm)) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TLTIU
+            case 0x0C: if (this.gpr[rs] === imm) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TEQI
+            case 0x0E: if (this.gpr[rs] !== imm) return this.raiseTrap(currentPc, isDelaySlot, 13); break; // TNEI
         }
         if (link) this.gpr[31] = currentPc + 8n;
         if (taken) {
@@ -963,55 +970,88 @@ class CPU {
         return false;
     }
 
-    decompressMIO0(input, offset) {
-        const view = new DataView(input, offset);
-        const magic = view.getUint32(0, false);
+    decompressMIO0(mmu, offset) {
+        // MIO0 decompression supporting both RAM and ROM (Cartridge) source
+        const read8 = (addr) => {
+            // Handle cartridge mirrors common in SM64 PAL (0x01xxxxxx)
+            if (addr < 0x08000000 && addr > 0x007FFFFF) {
+                return mmu.memory.readRom8(addr & 0x0FFFFFFF);
+            }
+            return mmu.read8(addr);
+        };
+        const read16 = (addr) => {
+            if (addr < 0x08000000 && addr > 0x007FFFFF) {
+                return mmu.memory.readRom16(addr & 0x0FFFFFFF);
+            }
+            return mmu.read16(addr);
+        };
+        const read32 = (addr) => {
+            if (addr < 0x08000000 && addr > 0x007FFFFF) {
+                return mmu.memory.readRom32(addr & 0x0FFFFFFF);
+            }
+            return mmu.read32(addr);
+        };
+
+        const magic = read32(offset);
         if (magic !== 0x4D494F30) { // 'MIO0'
-            console.error("MIO0: Invalid magic");
+            console.error(`MIO0: Invalid magic 0x${magic.toString(16)} at 0x${offset.toString(16)}`);
             return null;
         }
 
-        const destSize = view.getUint32(4, false);
-        const compOffset = view.getUint32(8, false);
-        const uncompOffset = view.getUint32(12, false);
+        const destSize = read32(offset + 4);
+        const compOffset = read32(offset + 8);
+        const uncompOffset = read32(offset + 12);
 
         const output = new Uint8Array(destSize);
         let outIdx = 0;
         let bitIdx = 0;
-        let compIdx = compOffset;
-        let uncompIdx = uncompOffset;
-        let controlIdx = 16;
+        let compIdx = offset + compOffset;
+        let uncompIdx = offset + uncompOffset;
+        let controlIdx = offset + 16;
 
         while (outIdx < destSize) {
-            const controlByte = view.getUint8(controlIdx + (bitIdx >> 3));
+            const controlByte = read8(controlIdx + (bitIdx >> 3));
             const bit = (controlByte >> (7 - (bitIdx & 7))) & 1;
             bitIdx++;
 
             if (bit) {
-                if (uncompIdx < view.byteLength) {
-                    output[outIdx++] = view.getUint8(uncompIdx++);
-                }
+                output[outIdx++] = read8(uncompIdx++);
             } else {
-                if (compIdx + 1 < view.byteLength) {
-                    const pair = view.getUint16(compIdx, false);
-                    compIdx += 2;
-                    const lookbackLen = (pair >> 12) + 3;
-                    const lookbackDist = (pair & 0xFFF) + 1;
-                    let lookbackIdx = outIdx - lookbackDist;
-                    for (let i = 0; i < lookbackLen; i++) {
-                        if (outIdx < destSize) {
-                            output[outIdx] = (lookbackIdx >= 0) ? output[lookbackIdx] : 0;
-                            outIdx++;
-                            lookbackIdx++;
-                        }
+                const pair = read16(compIdx);
+                compIdx += 2;
+                const lookbackLen = (pair >> 12) + 3;
+                const lookbackDist = (pair & 0xFFF) + 1;
+                let lookbackIdx = outIdx - lookbackDist;
+                for (let i = 0; i < lookbackLen; i++) {
+                    if (outIdx < destSize) {
+                        output[outIdx] = (lookbackIdx >= 0) ? output[lookbackIdx] : 0;
+                        outIdx++;
+                        lookbackIdx++;
                     }
                 }
             }
-            if (bitIdx === 8 * (compOffset - 16)) break; // Safety
+            // Safety break to prevent infinite loops if data is corrupt
+            if (bitIdx > 1000000) break;
         }
         return output;
     }
 
+
+    raiseTrap(pc, isDelaySlot, code) {
+        const instruction = this.mmu.read32(Number(pc));
+        const trapCode = (instruction >>> 6) & 0xFFFFF; // 20 bits for SYSCALL/BREAK, 10 for traps
+        console.log(`TRAP/SYSCALL/BREAK: code=${code} trapCode=${trapCode} at PC=0x${pc.toString(16)}`);
+
+        // Print registers for debugging
+        let regStr = "";
+        for (let i = 0; i < 32; i++) {
+            regStr += `r${i}=0x${this.gpr[i].toString(16)} `;
+            if ((i + 1) % 4 === 0) regStr += "\n";
+        }
+        console.log("Registers:\n" + regStr);
+
+        return this.raiseException(code, pc, isDelaySlot);
+    }
 
     raiseException(code, pc, isDelaySlot) {
         const status = this.cp0Registers[12];

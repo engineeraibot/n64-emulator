@@ -67,22 +67,24 @@ class Memory {
         console.log("MIO0 Blocks in normalized ROM: " + mio0Blocks.join(", "));
         const lastBytes = Array.from(romBytes.slice(-16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
         console.log("Last 16 bytes of normalized ROM: " + lastBytes);
+        const checkBytes = Array.from(romBytes.slice(0x57d8b0, 0x57d8b0 + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
+        console.log("Bytes at 0x57d8b0 in normalized ROM: " + checkBytes);
     }
 
     readRom8(address) {
-        if (!this.romView || address < 0 || address >= this.rom.byteLength) return 0;
-        return this.romView.getUint8(address);
+        if (!this.romView) return 0xFF;
+        return this.romView.getUint8((address >>> 0) % this.rom.byteLength);
     }
     readRom16(address) {
-        if (!this.romView || address < 0 || address + 2 > this.rom.byteLength) return 0;
-        return this.romView.getUint16(address, false);
+        if (!this.romView) return 0xFFFF;
+        return this.romView.getUint16((address >>> 0) % this.rom.byteLength, false);
     }
     readRom32(address) {
-        if (!this.romView || address < 0 || address + 4 > this.rom.byteLength) return 0;
-        return this.romView.getUint32(address, false);
+        if (!this.romView) return 0xFFFFFFFF;
+        return this.romView.getUint32((address >>> 0) % this.rom.byteLength, false);
     }
     readRom64(address) {
-        if (!this.romView || address < 0 || address + 8 > this.rom.byteLength) return 0n;
-        return this.romView.getBigUint64(address, false);
+        if (!this.romView) return 0xFFFFFFFFFFFFFFFFn;
+        return this.romView.getBigUint64((address >>> 0) % this.rom.byteLength, false);
     }
 }
