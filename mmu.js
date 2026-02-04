@@ -411,10 +411,18 @@ class MMU {
             const rdramView = new Uint8Array(this.memory.rdram);
             const romView = new Uint8Array(this.memory.rom);
 
-            let isDomain1 = (cartAddr >= 0x10000000 && cartAddr <= 0x1FBFFFFF);
-            let romOffset = 0;
-            if (isDomain1) {
+            let romOffset = -1;
+            if (cartAddr >= 0x10000000 && cartAddr <= 0x1FBFFFFF) {
                 romOffset = cartAddr - 0x10000000;
+            } else if (cartAddr >= 0x06000000 && cartAddr <= 0x07FFFFFF) {
+                // Domain 1 Address 1
+                romOffset = cartAddr - 0x06000000;
+            } else if (cartAddr >= 0x01000000 && cartAddr <= 0x05FFFFFF) {
+                // Domain 2 / Mirror
+                romOffset = cartAddr - 0x01000000;
+            }
+
+            if (romOffset !== -1) {
                 for (let i = 0; i < length; i++) {
                     const dst = ramAddr + i;
                     const src = (romOffset + i) % romView.length;
@@ -454,8 +462,8 @@ class MMU {
                 if (ramAddr + i < rdramView.length) rdramView[ramAddr + i] = this.pifRam[i];
             }
         }
-        // SI DMA takes ~50k-100k instructions for 64 bytes
-        this.siBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 50000;
+        // SI DMA takes ~4k-10k instructions for 64 bytes
+        this.siBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 5000;
     }
     read64(address) {
         const physicalAddress = this.translateAddress(address);

@@ -234,6 +234,8 @@ class RCP {
             otherModeHi: 0,
             otherModeLo: 0,
             fillColor: 0,
+            primColor: 0xFFFFFFFF,
+            envColor: 0,
             textureScaleS: 1.0,
             textureScaleT: 1.0,
             currentTile: 0
@@ -291,11 +293,13 @@ class RCP {
                 case 0xB0: // G_VTX (Variant)
                     this.handleG_VTX(hi, lo);
                     break;
+                case 0x05: // G_TRI1 (F3DEX2)
                 case 0xBF: // G_TRI1 (F3D)
-                    this.handleG_TRI1(hi, lo);
+                    this.handleG_TRI1(hi, lo, cmd === 0x05);
                     break;
+                case 0x06: // G_TRI2 (F3DEX2)
                 case 0xB1: // G_TRI2 (F3D)
-                    this.handleG_TRI2(hi, lo);
+                    this.handleG_TRI2(hi, lo, cmd === 0x06);
                     break;
                 case 0xBC: // G_MOVEWORD
                     this.handleG_MOVEWORD(hi, lo);
@@ -452,10 +456,17 @@ class RCP {
         }
     }
 
-    handleG_TRI1(hi, lo) {
-        const v1idx = (lo >>> 16) & 0xFF;
-        const v2idx = (lo >>> 8) & 0xFF;
-        const v3idx = (lo >>> 0) & 0xFF;
+    handleG_TRI1(hi, lo, isF3DEX2) {
+        let v1idx, v2idx, v3idx;
+        if (isF3DEX2) {
+            v1idx = (hi >>> 16) & 0xFF;
+            v2idx = (hi >>> 8) & 0xFF;
+            v3idx = (hi >>> 0) & 0xFF;
+        } else {
+            v1idx = (lo >>> 16) & 0xFF;
+            v2idx = (lo >>> 8) & 0xFF;
+            v3idx = (lo >>> 0) & 0xFF;
+        }
 
         const v1 = this.rspState.vertices[v1idx / 2];
         const v2 = this.rspState.vertices[v2idx / 2];
@@ -466,7 +477,8 @@ class RCP {
         }
     }
 
-    handleG_TRI2(hi, lo) {
+    handleG_TRI2(hi, lo, isF3DEX2) {
+        // Both F3D and F3DEX2 use the same format for TRI2 (indices in both hi and lo words)
         const v1idx = (hi >>> 16) & 0xFF;
         const v2idx = (hi >>> 8) & 0xFF;
         const v3idx = (hi >>> 0) & 0xFF;
@@ -682,6 +694,14 @@ class RCP {
         const zCmp = (this.rspState.otherModeLo & 0x10);
         const zUpd = (this.rspState.otherModeLo & 0x20);
 
+        // Decode Prim/Env colors
+        const pr = (this.rspState.primColor >>> 24) & 0xFF;
+        const pg = (this.rspState.primColor >>> 16) & 0xFF;
+        const pb = (this.rspState.primColor >>> 8) & 0xFF;
+        const er = (this.rspState.envColor >>> 24) & 0xFF;
+        const eg = (this.rspState.envColor >>> 16) & 0xFF;
+        const eb = (this.rspState.envColor >>> 8) & 0xFF;
+
         for (let y = minY; y <= maxY; y++) {
             if (y < 0 || y >= 240) continue;
             for (let x = minX; x <= maxX; x++) {
@@ -700,39 +720,52 @@ class RCP {
                         }
                     }
 
-                    let r, g, b;
-
-                    // Texture coordinates
-                    const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
-                    const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
-
-                    // Simplified texture sampling (Point sampling, 16-bit RGBA)
-                    const texS = Math.floor(s / 32.0);
-                    const texT = Math.floor(t / 32.0);
-
-                    const maskS = (tile.lrs - tile.uls) / 4 + 1;
-                    const maskT = (tile.lrt - tile.ult) / 4 + 1;
-                    const ts = Math.abs(texS) % (maskS || 32);
-                    const tt = Math.abs(texT) % (maskT || 32);
-
-                    const lineBytes = tile.line * 8;
-                    const texAddr = (tile.tmem * 8) + (tt * lineBytes + ts * 2);
-
+                    // Vertex color
                     const vr = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
                     const vg = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
                     const vb = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
 
-                    if (this.rspState.useTexture && texAddr + 2 <= 4096 && this.rspState.textureImage !== 0) {
-                        const val = (this.tmem[texAddr] << 8) | this.tmem[texAddr + 1];
-                        const tr = ((val >> 11) & 0x1F) << 3;
-                        const tg = ((val >> 6) & 0x1F) << 3;
-                        const tb = ((val >> 1) & 0x1F) << 3;
-                        // Modulation: (Texture * Color)
-                        r = (tr * vr) / 255;
-                        g = (tg * vg) / 255;
-                        b = (tb * vb) / 255;
-                    } else {
-                        r = vr; g = vg; b = vb;
+                    let r = vr, g = vg, b = vb;
+
+                    if (this.rspState.useTexture && this.rspState.textureImage !== 0) {
+                        // Texture coordinates
+                        const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
+                        const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
+
+                        // Improved texture sampling (Point sampling, 16-bit RGBA)
+                        const texS = Math.floor(s / 32.0);
+                        const texT = Math.floor(t / 32.0);
+
+                        const maskS = (1 << ((this.rspState.otherModeHi >> 14) & 0xF)); // Simplified mask
+                        const maskT = (1 << ((this.rspState.otherModeHi >> 4) & 0xF));
+
+                        // Use tile line for wrapping
+                        const wrapS = (tile.line * 8) / 2; // Width in pixels for 16-bit
+                        const wrapT = 64; // Fallback
+
+                        const ts = Math.abs(texS) % (wrapS || 32);
+                        const tt = Math.abs(texT) % wrapT;
+
+                        const lineBytes = tile.line * 8;
+                        const texAddr = (tile.tmem * 8) + (tt * lineBytes + ts * 2);
+
+                        if (texAddr + 2 <= 4096) {
+                            const val = (this.tmem[texAddr] << 8) | this.tmem[texAddr + 1];
+                            const tr = ((val >> 11) & 0x1F) << 3;
+                            const tg = ((val >> 6) & 0x1F) << 3;
+                            const tb = ((val >> 1) & 0x1F) << 3;
+
+                            // Color Combiner Simulation (Simplified)
+                            // SM64 often uses (TEXEL0 * SHADE) or (TEXEL0 * PRIMITIVE)
+                            const comboHi = this.rspState.combine.hi;
+                            if ((comboHi & 0xF00) === 0x100) { // TEXEL0 * SHADE (Vertex Color)
+                                r = (tr * vr) / 255; g = (tg * vg) / 255; b = (tb * vb) / 255;
+                            } else if ((comboHi & 0xF00) === 0x300) { // TEXEL0 * PRIMITIVE
+                                r = (tr * pr) / 255; g = (tg * pg) / 255; b = (tb * pb) / 255;
+                            } else {
+                                r = tr; g = tg; b = tb;
+                            }
+                        }
                     }
 
                     const size = this.rspState.colorImageSize;
