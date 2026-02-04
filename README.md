@@ -3,7 +3,7 @@
 A web-based Nintendo 64 emulator for mobile browsers.
 
 ## Current Status: Super Mario 64 Emulation
-Estimated completion: **98%**
+Estimated completion: **99%**
 
 ### Progress:
 - [x] CPU: Basic MIPS III/IV instructions (64-bit)

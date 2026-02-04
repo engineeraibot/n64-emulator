@@ -235,7 +235,8 @@ class RCP {
             otherModeLo: 0,
             fillColor: 0,
             textureScaleS: 1.0,
-            textureScaleT: 1.0
+            textureScaleT: 1.0,
+            currentTile: 0
         };
         this.warnedCommands = new Set();
         this.executeDisplayList(addr);
@@ -285,9 +286,8 @@ class RCP {
                     break;
                 case 0xD7: // G_TEXTURE (Fast3D uses 0xD7 for some things?)
                     break;
-                case 0x01: // G_VTX
-                    this.handleG_VTX(hi, lo);
-                    break;
+                case 0x01: // G_VTX (F3DEX2)
+                case 0x04: // G_VTX (F3D)
                 case 0xB0: // G_VTX (Variant)
                     this.handleG_VTX(hi, lo);
                     break;
@@ -364,6 +364,7 @@ class RCP {
                 case 0xBB: // G_TEXTURE
                     this.rspState.textureScaleS = (lo >>> 16) / 65536.0;
                     this.rspState.textureScaleT = (lo & 0xFFFF) / 65536.0;
+                    this.rspState.currentTile = (hi >>> 8) & 0x7;
                     break;
                 case 0xED: // G_SETSCISSOR
                     break;
@@ -662,7 +663,6 @@ class RCP {
     drawTriangle(v1, v2, v3) {
         const addr = this.rspState.colorImage;
         if (!addr) return;
-        // console.log(`Drawing triangle to 0x${addr.toString(16)}`);
 
         const x1 = v1.x, y1 = v1.y;
         const x2 = v2.x, y2 = v2.y;
@@ -674,7 +674,8 @@ class RCP {
         const maxY = Math.ceil(Math.max(y1, y2, y3));
 
         const rdramView = new DataView(this.mmu.memory.rdram);
-        const tile = this.rspState.tiles[0]; // Simplified: assume tile 0
+        const tileIdx = this.rspState.currentTile;
+        const tile = this.rspState.tiles[tileIdx];
         const width = this.rspState.colorImageWidth;
         const zAddr = this.rspState.depthImage;
 

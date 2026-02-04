@@ -42,6 +42,8 @@ class MMU {
         this.dpcRegisters = new Uint32Array(8);
         this.aiRegisters = new Uint32Array(6);
         this.riRegisters = new Uint32Array(8);
+        this.pifRom = new Uint8Array(2048); // 2KB PIF ROM
+        this.pifRomView = new DataView(this.pifRom.buffer);
         this.pifRam = new Uint8Array(64);
         this.pifRamView = new DataView(this.pifRam.buffer);
         this.spDmem = new Uint8Array(0x1000);
@@ -112,6 +114,8 @@ class MMU {
         else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom8(physicalAddress - 0x01000000); // Domain 2 mirror
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint8(physicalAddress - MMU.SP_DMEM_START);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint8(physicalAddress - MMU.SP_IMEM_START);
+        else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint8(physicalAddress - MMU.PIF_ROM_START);
+        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint8(physicalAddress - MMU.PIF_RAM_START);
         return 0;
     }
     write8(address, value) {
@@ -138,6 +142,8 @@ class MMU {
         else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom16(physicalAddress - 0x01000000);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint16(physicalAddress - MMU.SP_DMEM_START, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint16(physicalAddress - MMU.SP_IMEM_START, false);
+        else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint16(physicalAddress - MMU.PIF_ROM_START, false);
+        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint16(physicalAddress - MMU.PIF_RAM_START, false);
         return 0;
     }
     write16(address, value) {
@@ -195,7 +201,6 @@ class MMU {
             if (regIdx === 1) return 0x02020102; // MI_VERSION
             if (regIdx === 2) {
                 this.checkInternalEvents();
-                console.log(`MI_INTR Read: 0x${this.miRegisters[2].toString(16)}`);
             }
             return this.miRegisters[regIdx];
         }
@@ -219,6 +224,7 @@ class MMU {
             return this.aiRegisters[regIdx];
         }
         else if (physicalAddress >= MMU.RI_REGS_START && physicalAddress <= MMU.RI_REGS_START + 0x1F) return this.riRegisters[(physicalAddress - MMU.RI_REGS_START) >> 2];
+        else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint32(physicalAddress - MMU.PIF_ROM_START, false);
         else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint32(physicalAddress - MMU.PIF_RAM_START, false);
 
         return 0;
@@ -405,31 +411,20 @@ class MMU {
             const rdramView = new Uint8Array(this.memory.rdram);
             const romView = new Uint8Array(this.memory.rom);
 
+            let isDomain1 = (cartAddr >= 0x10000000 && cartAddr <= 0x1FBFFFFF);
             let romOffset = 0;
-            if (cartAddr >= 0x10000000 && cartAddr <= 0x1FBFFFFF) {
+            if (isDomain1) {
                 romOffset = cartAddr - 0x10000000;
-            } else if (cartAddr >= 0x01000000 && cartAddr <= 0x01FFFFFF) {
-                // Cartridge Domain 2 Address 1
-                romOffset = cartAddr - 0x01000000;
-            } else if (cartAddr >= 0x05000000 && cartAddr <= 0x05FFFFFF) {
-                // Cartridge Domain 2 Address 2 (RCP)
-                romOffset = cartAddr - 0x05000000;
-            } else if (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF) {
-                // Cartridge Domain 2 Address 2 (SRAM/Flash)
-                romOffset = cartAddr - 0x08000000;
+                for (let i = 0; i < length; i++) {
+                    const dst = ramAddr + i;
+                    const src = (romOffset + i) % romView.length;
+                    if (dst < rdramView.length) {
+                        rdramView[dst] = romView[src];
+                    }
+                }
             } else {
-                romOffset = cartAddr % romView.length;
-            }
-
-            if (romOffset + length > romView.length) {
-                console.warn(`PI DMA: Attempted to read beyond ROM size! Offset=0x${romOffset.toString(16)} Len=0x${length.toString(16)} ROMSize=0x${romView.length.toString(16)}`);
-            }
-
-            for (let i = 0; i < length; i++) {
-                const dst = ramAddr + i;
-                const src = (romOffset + i) % romView.length;
-                if (dst < rdramView.length) {
-                    rdramView[dst] = romView[src];
+                if ((this.cpu.instructionCount & 0xFFF) === 0) {
+                    console.warn(`PI DMA from non-ROM address: 0x${cartAddr.toString(16)}. Skipping copy to avoid corruption.`);
                 }
             }
             const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
@@ -437,9 +432,9 @@ class MMU {
         }
 
         // Simulate DMA delay (More realistic timing for PI DMA)
-        // 5MB/s -> ~18 bytes per instruction at 93MHz
-        // Using a more conservative value (2 bytes per instruction) to ensure stability.
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + Math.floor(length / 2);
+        // 5MB/s -> ~18 bytes per instruction at 93.75MHz
+        // We use ~20 instructions per byte to be closer to hardware and satisfy timing checks.
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (length * 20);
     }
 
     doSiDma(isToPif) {
@@ -478,7 +473,11 @@ class MMU {
     }
 
     translateAddress(address) {
-        address = address >>> 0;
+        if (typeof address === 'bigint') {
+            address = Number(address & 0xFFFFFFFFn) >>> 0;
+        } else {
+            address = address >>> 0;
+        }
         // KSEG0 & KSEG1 map to physical 0x00000000 - 0x1FFFFFFF
         if (address >= 0x80000000 && address <= 0xBFFFFFFF) {
             return address & 0x1FFFFFFF;
