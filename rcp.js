@@ -303,9 +303,6 @@ class RCP {
                 case 0xBD: // G_MOVEMEM
                     this.handleG_MOVEMEM(hi, lo);
                     break;
-                case 0xB1: // G_TRI2
-                    this.handleG_TRI2(hi, lo);
-                    break;
                 case 0xB2: // G_MODIFYVTX
                     break;
                 case 0xDB: // G_SETSEGMENT
@@ -407,7 +404,7 @@ class RCP {
 
         const mv = this.rspState.modelviewStack[this.rspState.modelviewStack.length - 1];
         const p = this.rspState.projectionMatrix;
-        const mvp = this.multiplyMatrices(mv, p);
+        const mvp = this.multiplyMatrices(p, mv);
 
         for (let i = 0; i < num; i++) {
             const vAddr = (addr + i * 16) & 0x7FFFFF;
@@ -515,7 +512,7 @@ class RCP {
     }
 
     handleG_SETTILE(hi, lo) {
-        const tile = lo >>> 24;
+        const tile = (lo >>> 24) & 0x7;
         if (tile < 8) {
             this.rspState.tiles[tile].format = (hi >>> 21) & 0x7;
             this.rspState.tiles[tile].size = (hi >>> 19) & 0x3;
@@ -597,7 +594,7 @@ class RCP {
     }
 
     handleG_SETTILESIZE(hi, lo) {
-        const tile = lo >>> 24;
+        const tile = (lo >>> 24) & 0x7;
         if (tile < 8) {
             this.rspState.tiles[tile].uls = (hi >>> 12) & 0xFFF;
             this.rspState.tiles[tile].ult = hi & 0xFFF;

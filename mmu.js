@@ -398,7 +398,7 @@ class MMU {
         const cartAddr = this.piRegisters[1] & 0x1FFFFFFF;
         const length = ((cartToDram ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
-        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} Len=0x${length.toString(16)}`);
+        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Raw: 0x${this.piRegisters[1].toString(16)}) Len=0x${length.toString(16)}`);
         this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
 
         if (cartToDram && this.memory.rom) {
@@ -419,6 +419,10 @@ class MMU {
                 romOffset = cartAddr - 0x08000000;
             } else {
                 romOffset = cartAddr % romView.length;
+            }
+
+            if (romOffset + length > romView.length) {
+                console.warn(`PI DMA: Attempted to read beyond ROM size! Offset=0x${romOffset.toString(16)} Len=0x${length.toString(16)} ROMSize=0x${romView.length.toString(16)}`);
             }
 
             for (let i = 0; i < length; i++) {

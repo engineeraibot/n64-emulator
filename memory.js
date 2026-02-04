@@ -57,10 +57,10 @@ class Memory {
         // Find all MIO0 blocks in the normalized ROM
         const romBytes = new Uint8Array(this.rom);
         const mio0Blocks = [];
-        const view = new DataView(this.rom);
+        const romDataView = new DataView(this.rom);
         for (let i = 0; i < romBytes.length - 16; i++) {
             if (romBytes[i] === 0x4D && romBytes[i+1] === 0x49 && romBytes[i+2] === 0x4F && romBytes[i+3] === 0x30) {
-                const destSize = view.getUint32(i + 4, false);
+                const destSize = romDataView.getUint32(i + 4, false);
                 mio0Blocks.push(`0x${i.toString(16)} (size: ${destSize})`);
             }
         }
