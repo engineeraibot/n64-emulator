@@ -99,6 +99,15 @@ class CPU {
         // Initial Status: CU0=1, CU1=1, BEV=0, EXL=0, IE=0
         this.cp0Registers[12] = 0x30000000n;
 
+        // Set up basic exception vector pointers if necessary
+        // Most games will overwrite these anyway.
+
+        // Initialize PIF RAM for CIC-6102
+        this.mmu.pifRam[0x24] = 0x00;
+        this.mmu.pifRam[0x25] = 0x00;
+        this.mmu.pifRam[0x26] = 0x3F;
+        this.mmu.pifRam[0x27] = 0x3F;
+
         this.isHleBootDone = true;
     }
 
@@ -616,105 +625,121 @@ class CPU {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
-        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~3;
-        const word = this.mmu.read32(alignedAddress);
+        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFn);
+        const alignedAddr = address & ~3;
+        const byteOffset = address & 3;
+        const word = this.mmu.read32(alignedAddr);
         const rtVal = Number(this.gpr[rt] & 0xFFFFFFFFn);
-        const shift = (3 - (address & 3)) << 3;
-        const mask = (1 << shift) - 1;
-        const result = (rtVal & mask) | (word & ~mask);
+        let result;
+        if (byteOffset === 0) result = word;
+        else if (byteOffset === 1) result = (rtVal & 0x000000FF) | (word << 8);
+        else if (byteOffset === 2) result = (rtVal & 0x0000FFFF) | (word << 16);
+        else result = (rtVal & 0x00FFFFFF) | (word << 24);
         this.gpr[rt] = BigInt.asIntN(32, BigInt(result | 0));
     }
     opLWR(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
-        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~3;
-        const word = this.mmu.read32(alignedAddress);
+        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFn);
+        const alignedAddr = address & ~3;
+        const byteOffset = address & 3;
+        const word = this.mmu.read32(alignedAddr);
         const rtVal = Number(this.gpr[rt] & 0xFFFFFFFFn);
-        const shift = (address & 3) << 3;
-        const mask = ~((1 << (32 - shift)) - 1);
-        const result = (rtVal & mask) | (word & ~mask);
+        let result;
+        if (byteOffset === 0) result = (rtVal & 0xFFFFFF00) | (word >>> 24);
+        else if (byteOffset === 1) result = (rtVal & 0xFFFF0000) | (word >>> 16);
+        else if (byteOffset === 2) result = (rtVal & 0xFF000000) | (word >>> 8);
+        else result = word;
         this.gpr[rt] = BigInt.asIntN(32, BigInt(result | 0));
     }
     opSWL(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
-        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~3;
-        const word = this.mmu.read32(alignedAddress);
+        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFn);
+        const alignedAddr = address & ~3;
+        const byteOffset = address & 3;
+        const word = this.mmu.read32(alignedAddr);
         const rtVal = Number(this.gpr[rt] & 0xFFFFFFFFn);
-        const shift = (3 - (address & 3)) << 3;
-        const mask = (1 << shift) - 1;
-        const result = (word & mask) | (rtVal & ~mask);
-        this.mmu.write32(alignedAddress, (result >>> 0));
+        let result;
+        if (byteOffset === 0) result = rtVal;
+        else if (byteOffset === 1) result = (word & 0xFF000000) | (rtVal >>> 8);
+        else if (byteOffset === 2) result = (word & 0xFFFF0000) | (rtVal >>> 16);
+        else result = (word & 0xFFFFFF00) | (rtVal >>> 24);
+        this.mmu.write32(alignedAddr, result >>> 0);
     }
     opSWR(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
-        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~3;
-        const word = this.mmu.read32(alignedAddress);
+        const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFn);
+        const alignedAddr = address & ~3;
+        const byteOffset = address & 3;
+        const word = this.mmu.read32(alignedAddr);
         const rtVal = Number(this.gpr[rt] & 0xFFFFFFFFn);
-        const shift = (address & 3) << 3;
-        const mask = ~((1 << (32 - shift)) - 1);
-        const result = (word & mask) | (rtVal & ~mask);
-        this.mmu.write32(alignedAddress, (result >>> 0));
+        let result;
+        if (byteOffset === 0) result = (word & 0x00FFFFFF) | (rtVal << 24);
+        else if (byteOffset === 1) result = (word & 0x0000FFFF) | (rtVal << 16);
+        else if (byteOffset === 2) result = (word & 0x000000FF) | (rtVal << 8);
+        else result = rtVal;
+        this.mmu.write32(alignedAddr, result >>> 0);
     }
     opLDL(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~7;
-        const dword = this.mmu.read64(alignedAddress);
-        const rtVal = this.gpr[rt];
-        const shift = (7 - (address & 7)) << 3;
-        const mask = (1n << BigInt(shift)) - 1n;
-        const result = ((rtVal & mask) | (dword & ~mask)) & 0xFFFFFFFFFFFFFFFFn;
-        this.gpr[rt] = result;
+        const alignedAddr = address & ~7;
+        const byteOffset = address & 7;
+        const dword = this.mmu.read64(alignedAddr);
+        const rtVal = BigInt.asUintN(64, this.gpr[rt]);
+        let result;
+        if (byteOffset === 0) result = dword;
+        else result = (rtVal & ((1n << BigInt(byteOffset * 8)) - 1n)) | (dword << BigInt(byteOffset * 8));
+        this.gpr[rt] = BigInt.asIntN(64, result);
     }
     opLDR(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~7;
-        const dword = this.mmu.read64(alignedAddress);
-        const rtVal = this.gpr[rt];
-        const shift = (address & 7) << 3;
-        const mask = ~((1n << BigInt(64 - shift)) - 1n);
-        const result = ((rtVal & mask) | (dword & ~mask)) & 0xFFFFFFFFFFFFFFFFn;
-        this.gpr[rt] = result;
+        const alignedAddr = address & ~7;
+        const byteOffset = address & 7;
+        const dword = this.mmu.read64(alignedAddr);
+        const rtVal = BigInt.asUintN(64, this.gpr[rt]);
+        let result;
+        if (byteOffset === 7) result = dword;
+        else result = (rtVal & ~((1n << BigInt((byteOffset + 1) * 8)) - 1n)) | (dword >> BigInt((7 - byteOffset) * 8));
+        this.gpr[rt] = BigInt.asIntN(64, result);
     }
     opSDL(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~7;
-        const dword = this.mmu.read64(alignedAddress);
-        const rtVal = this.gpr[rt];
-        const shift = (7 - (address & 7)) << 3;
-        const mask = (1n << BigInt(shift)) - 1n;
-        const result = ((dword & mask) | (rtVal & ~mask)) & 0xFFFFFFFFFFFFFFFFn;
-        this.mmu.write64(alignedAddress, result);
+        const alignedAddr = address & ~7;
+        const byteOffset = address & 7;
+        const dword = this.mmu.read64(alignedAddr);
+        const rtVal = BigInt.asUintN(64, this.gpr[rt]);
+        let result;
+        if (byteOffset === 0) result = rtVal;
+        else result = (dword & ~((1n << BigInt((8 - byteOffset) * 8)) - 1n)) | (rtVal >> BigInt(byteOffset * 8));
+        this.mmu.write64(alignedAddr, result);
     }
     opSDR(instruction) {
         const base = (instruction >>> 21) & 0x1F;
         const rt = (instruction >>> 16) & 0x1F;
         const offset = BigInt.asIntN(16, BigInt(instruction & 0xFFFF));
         const address = Number((this.gpr[base] + offset) & 0xFFFFFFFFFFFFFFFFn);
-        const alignedAddress = address & ~7;
-        const dword = this.mmu.read64(alignedAddress);
-        const rtVal = this.gpr[rt];
-        const shift = (address & 7) << 3;
-        const mask = ~((1n << BigInt(64 - shift)) - 1n);
-        const result = ((dword & mask) | (rtVal & ~mask)) & 0xFFFFFFFFFFFFFFFFn;
-        this.mmu.write64(alignedAddress, result);
+        const alignedAddr = address & ~7;
+        const byteOffset = address & 7;
+        const dword = this.mmu.read64(alignedAddr);
+        const rtVal = BigInt.asUintN(64, this.gpr[rt]);
+        let result;
+        if (byteOffset === 7) result = rtVal;
+        else result = (dword & ((1n << BigInt((byteOffset + 1) * 8)) - 1n)) | (rtVal << BigInt((7 - byteOffset) * 8));
+        this.mmu.write64(alignedAddr, result);
     }
     opSD(instruction) {
         const base = (instruction >>> 21) & 0x1F;
@@ -1008,12 +1033,8 @@ class CPU {
         this.pc = vector;
         this.exceptionRaised = true;
         if (code !== 0) {
-            const pcKey = `${code}_${pc}`;
-            if (!this.warnedExceptions.has(pcKey)) {
-                const instruction = this.mmu.read32(Number(pc));
-                console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')}) EXL=${status & 2n}`);
-                // this.warnedExceptions.add(pcKey); // Log every time for now
-            }
+            const instruction = this.mmu.read32(Number(pc));
+            console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')}) EXL=${status & 2n}`);
         }
         return null;
     }
