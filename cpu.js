@@ -908,7 +908,14 @@ class CPU {
         const rd = (instruction >>> 11) & 0x1F;
         if (sub === 0x00) { // MFC0
             this.gpr[rt] = BigInt.asIntN(32, this.cp0Registers[rd]);
+        } else if (sub === 0x01) { // DMFC0
+            this.gpr[rt] = this.cp0Registers[rd];
         } else if (sub === 0x04) { // MTC0
+            this.cp0Registers[rd] = BigInt.asIntN(32, this.gpr[rt]);
+            if (rd === 11) { // Compare
+                this.cp0Registers[13] &= ~0x00008000n; // Clear IP7
+            }
+        } else if (sub === 0x05) { // DMTC0
             this.cp0Registers[rd] = this.gpr[rt];
             if (rd === 11) { // Compare
                 this.cp0Registers[13] &= ~0x00008000n; // Clear IP7
