@@ -394,7 +394,7 @@ class MMU {
     }
 
     doPiDma(cartToDram) {
-        const ramAddr = this.piRegisters[0] & 0x00FFFFFF;
+        const ramAddr = this.piRegisters[0] & 0x007FFFFF; // Mask for 8MB RDRAM
         const cartAddr = this.piRegisters[1] & 0x1FFFFFFF;
         const length = ((cartToDram ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
@@ -479,8 +479,10 @@ class MMU {
 
     translateAddress(address) {
         address = address >>> 0;
-        if (address >= 0x80000000 && address <= 0x9FFFFFFF) return address - 0x80000000;
-        else if (address >= 0xA0000000 && address <= 0xBFFFFFFF) return address - 0xA0000000;
+        // KSEG0 & KSEG1 map to physical 0x00000000 - 0x1FFFFFFF
+        if (address >= 0x80000000 && address <= 0xBFFFFFFF) {
+            return address & 0x1FFFFFFF;
+        }
         return address;
     }
 }
