@@ -923,8 +923,13 @@ class CPU {
         } else if (sub >= 0x10) { // TLB / ERET
             const funct = instruction & 0x3F;
             if (funct === 0x18) { // ERET
-                this.pc = this.cp0Registers[14]; // EPC
-                this.cp0Registers[12] &= ~2n; // Clear EXL bit
+                if (this.cp0Registers[12] & 4n) { // ERL
+                    this.pc = this.cp0Registers[30]; // ErrorEPC
+                    this.cp0Registers[12] &= ~4n;
+                } else {
+                    this.pc = this.cp0Registers[14]; // EPC
+                    this.cp0Registers[12] &= ~2n; // EXL
+                }
                 return true; // PC already updated
             }
             return false; // Other TLB ops are NOPs for now
@@ -999,7 +1004,6 @@ class CPU {
                 this.cp0Registers[14] = pc; // EPC
             }
             this.cp0Registers[12] |= 2n; // Set EXL bit
-            if (!this.exceptionRaised) this.traceCount = 50;
         }
         this.pc = vector;
         this.exceptionRaised = true;

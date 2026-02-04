@@ -309,6 +309,12 @@ class RCP {
                     const seg = (hi >>> 2) & 0xF;
                     this.rspState.segments[seg] = lo & 0xFFFFFF;
                     break;
+                case 0xB6: // G_MOVEWORD (F3DEX2)
+                    this.handleG_MOVEWORD(hi, lo);
+                    break;
+                case 0xB7: // G_MOVEMEM (F3DEX2)
+                    this.handleG_MOVEMEM(hi, lo);
+                    break;
                 case 0xFD: // G_SETTIMG
                     this.rspState.textureImage = this.resolveAddress(lo);
                     break;
@@ -557,9 +563,14 @@ class RCP {
     handleG_LOADBLOCK(hi, lo) {
         const tile = (lo >>> 24) & 0x7;
         const lrs = (lo >>> 12) & 0xFFF;
+
         const addr = this.rspState.textureImage;
         const tmemAddr = this.rspState.tiles[tile].tmem * 8;
-        const size = (lrs + 1) * 8;
+
+        // size depends on format, but usually G_LOADBLOCK is used for a raw copy
+        // In 16-bit mode, it's (lrs+1) * 2 bytes.
+        // But many games use it for 64-bit alignment.
+        const size = (lrs + 1) * 8; // Approximation that works for most cases
 
         const rdramView = new Uint8Array(this.mmu.memory.rdram);
         for (let i = 0; i < size && (tmemAddr + i < 4096); i++) {
@@ -665,6 +676,10 @@ class RCP {
         const rdramView = new DataView(this.mmu.memory.rdram);
         const tile = this.rspState.tiles[0]; // Simplified: assume tile 0
         const width = this.rspState.colorImageWidth;
+        const zAddr = this.rspState.depthImage;
+
+        const zCmp = (this.rspState.otherModeLo & 0x10);
+        const zUpd = (this.rspState.otherModeLo & 0x20);
 
         for (let y = minY; y <= maxY; y++) {
             if (y < 0 || y >= 240) continue;
@@ -672,6 +687,18 @@ class RCP {
                 if (x < 0 || x >= width) continue;
                 const weights = this.getBarycentricWeights(x, y, x1, y1, x2, y2, x3, y3);
                 if (weights) {
+                    // Z-Buffer check
+                    const z = v1.z * weights.s + v2.z * weights.t + v3.z * weights.u;
+                    if (zCmp && zAddr) {
+                        const pzAddr = (zAddr + (y * width + x) * 2) & 0x7FFFFF;
+                        const oldZ = rdramView.getUint16(pzAddr, false);
+                        if (z < oldZ) { // Simplified Z-test
+                            if (zUpd) rdramView.setUint16(pzAddr, Math.max(0, Math.min(0xFFFF, z)), false);
+                        } else {
+                            continue;
+                        }
+                    }
+
                     let r, g, b;
 
                     // Texture coordinates
@@ -690,15 +717,21 @@ class RCP {
                     const lineBytes = tile.line * 8;
                     const texAddr = (tile.tmem * 8) + (tt * lineBytes + ts * 2);
 
+                    const vr = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
+                    const vg = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
+                    const vb = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+
                     if (this.rspState.useTexture && texAddr + 2 <= 4096 && this.rspState.textureImage !== 0) {
                         const val = (this.tmem[texAddr] << 8) | this.tmem[texAddr + 1];
-                        r = ((val >> 11) & 0x1F) << 3;
-                        g = ((val >> 6) & 0x1F) << 3;
-                        b = ((val >> 1) & 0x1F) << 3;
+                        const tr = ((val >> 11) & 0x1F) << 3;
+                        const tg = ((val >> 6) & 0x1F) << 3;
+                        const tb = ((val >> 1) & 0x1F) << 3;
+                        // Modulation: (Texture * Color)
+                        r = (tr * vr) / 255;
+                        g = (tg * vg) / 255;
+                        b = (tb * vb) / 255;
                     } else {
-                        r = v1.r * weights.s + v2.r * weights.t + v3.r * weights.u;
-                        g = v1.g * weights.s + v2.g * weights.t + v3.g * weights.u;
-                        b = v1.b * weights.s + v2.b * weights.t + v3.b * weights.u;
+                        r = vr; g = vg; b = vb;
                     }
 
                     const size = this.rspState.colorImageSize;
