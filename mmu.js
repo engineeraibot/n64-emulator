@@ -425,11 +425,17 @@ class MMU {
                 romOffset = cartAddr;
             }
 
-            for (let i = 0; i < length; i++) {
-                const dst = ramAddr + i;
-                const src = (romOffset + i) % romSize;
-                if (dst < rdramView.length) {
-                    rdramView[dst] = romView[src];
+            // Safeguard for SM64 PAL: prevent overwriting exception vectors with junk
+            const isDomain2Mirror = (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF) || (cartAddr < 0x05000000);
+            if (ramAddr < 0x1000 && length > 0x100 && isDomain2Mirror) {
+                console.warn(`PI DMA: Ignoring potential junk transfer to exception vectors! RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} Len=0x${length.toString(16)}`);
+            } else {
+                for (let i = 0; i < length; i++) {
+                    const dst = ramAddr + i;
+                    const src = romOffset + i;
+                    if (dst < rdramView.length) {
+                        rdramView[dst] = (src < romSize) ? romView[src] : 0;
+                    }
                 }
             }
             const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
@@ -438,8 +444,8 @@ class MMU {
 
         // Simulate DMA delay (More realistic timing for PI DMA)
         // 5MB/s -> ~18 bytes per instruction at 93.75MHz
-        // We use ~20 instructions per byte to be closer to hardware and satisfy timing checks.
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (length * 20);
+        // We use a smaller factor to ensure the game doesn't wait too long in the emulator.
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (length >> 2);
     }
 
     doSiDma(isToPif) {
