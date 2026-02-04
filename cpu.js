@@ -94,8 +94,8 @@ class CPU {
         this.gpr[31] = 0n; // ra: standard is 0
         this.gpr[16] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0, false))); // s0: ROM Info
         this.gpr[17] = 0x00000001n; // s1: CIC type (1 for 6102)
-        this.gpr[18] = BigInt.asIntN(32, 0x5D5886F0n); // s2: Checksum part 1
-        this.gpr[11] = BigInt.asIntN(32, 0x27299D20n); // t3: Checksum part 2
+        this.gpr[18] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x10, false))); // s2: Checksum part 1 from ROM header
+        this.gpr[11] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x14, false))); // t3: Checksum part 2 from ROM header
 
         // Initial Status: CU0=1, CU1=1, BEV=0, EXL=0, IE=0
         this.cp0Registers[12] = 0x30000000n;
@@ -151,6 +151,13 @@ class CPU {
         }
 
         const currentPc = this.pc;
+
+        // PC alignment check
+        if (currentPc & 3n) {
+            this.raiseException(4, currentPc, false); // AdEL
+            return;
+        }
+
         const instruction = this.mmu.read32(Number(currentPc));
 
         this.exceptionRaised = false;
