@@ -321,17 +321,17 @@ class RCP {
                     this.handleG_MOVEMEM(hi, lo);
                     break;
                 case 0xFD: // G_SETTIMG
-                    this.rspState.textureImage = this.resolveAddress(lo);
+                    this.rspState.textureImage = lo & 0x7FFFFF;
                     break;
                 case 0xFF: // G_SETCIMG
-                    this.rspState.colorImage = this.resolveAddress(lo);
+                    this.rspState.colorImage = lo & 0x7FFFFF;
                     this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
                     this.rspState.colorImageFormat = (hi >>> 21) & 0x7;
                     this.rspState.colorImageSize = (hi >>> 19) & 0x3;
                     console.log(`G_SETCIMG: Addr=0x${this.rspState.colorImage.toString(16)} Width=${this.rspState.colorImageWidth} Format=${this.rspState.colorImageFormat} Size=${this.rspState.colorImageSize}`);
                     break;
                 case 0xFE: // G_SETZIMG
-                    this.rspState.depthImage = this.resolveAddress(lo);
+                    this.rspState.depthImage = lo & 0x7FFFFF;
                     break;
                 case 0xF5: // G_SETTILE
                     this.handleG_SETTILE(hi, lo);

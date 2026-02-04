@@ -111,7 +111,6 @@ class MMU {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read8(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom8(physicalAddress - MMU.ROM_START);
-        else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom8(physicalAddress - 0x01000000); // Domain 2 mirror
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint8(physicalAddress - MMU.SP_DMEM_START);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint8(physicalAddress - MMU.SP_IMEM_START);
         else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint8(physicalAddress - MMU.PIF_ROM_START);
@@ -139,7 +138,6 @@ class MMU {
         const physicalAddress = this.translateAddress(address);
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read16(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom16(physicalAddress - MMU.ROM_START);
-        else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom16(physicalAddress - 0x01000000);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint16(physicalAddress - MMU.SP_DMEM_START, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint16(physicalAddress - MMU.SP_IMEM_START, false);
         else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint16(physicalAddress - MMU.PIF_ROM_START, false);
@@ -175,7 +173,6 @@ class MMU {
         }
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read32(physicalAddress);
         else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom32(physicalAddress - MMU.ROM_START);
-        else if (physicalAddress >= 0x01000000 && physicalAddress <= 0x01FFFFFF) return this.memory.readRom32(physicalAddress - 0x01000000);
         else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint32(physicalAddress - MMU.SP_DMEM_START, false);
         else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint32(physicalAddress - MMU.SP_IMEM_START, false);
         else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
@@ -233,8 +230,8 @@ class MMU {
         const physicalAddress = this.translateAddress(address);
 
         // Detailed logging for hardware registers
-        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x0480001B) {
-             // console.log(`HW Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
+        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x048000FF) {
+             console.log(`HW Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
         }
 
         if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write32(physicalAddress, value);
@@ -410,33 +407,33 @@ class MMU {
         if (cartToDram && this.memory.rom) {
             const rdramView = new Uint8Array(this.memory.rdram);
             const romView = new Uint8Array(this.memory.rom);
+            const romSize = this.memory.rom.byteLength;
 
-            let romOffset = -1;
+            // N64 Cartridge ROM is mapped to Domain 1 (starting at 0x10000000).
+            // However, many games and IPL3 versions use mirrors or different domains.
+            // A common robust approach is to use the lower 28 bits as offset and mirror by ROM size.
+            let romOffset = cartAddr & 0x0FFFFFFF;
             if (cartAddr >= 0x10000000 && cartAddr <= 0x1FBFFFFF) {
                 romOffset = cartAddr - 0x10000000;
             } else if (cartAddr >= 0x06000000 && cartAddr <= 0x07FFFFFF) {
-                // Domain 1 Address 1
                 romOffset = cartAddr - 0x06000000;
-            } else if (cartAddr >= 0x01000000 && cartAddr <= 0x05FFFFFF) {
-                // Domain 2 / Mirror
-                romOffset = cartAddr - 0x01000000;
+            } else if (cartAddr >= 0x08000000 && cartAddr <= 0x0FFFFFFF) {
+                // SRAM/Flash or Domain 2 mirror
+                romOffset = cartAddr - 0x08000000;
+            } else if (cartAddr < 0x05000000) {
+                // Mirror used by some games (like SM64 PAL)
+                romOffset = cartAddr;
             }
 
-            if (romOffset !== -1) {
-                for (let i = 0; i < length; i++) {
-                    const dst = ramAddr + i;
-                    const src = romOffset + i;
-                    if (dst < rdramView.length && src < romView.length) {
-                        rdramView[dst] = romView[src];
-                    }
-                }
-            } else {
-                if ((this.cpu.instructionCount & 0xFFF) === 0) {
-                    console.warn(`PI DMA from non-ROM address: 0x${cartAddr.toString(16)}. Skipping copy to avoid corruption.`);
+            for (let i = 0; i < length; i++) {
+                const dst = ramAddr + i;
+                const src = (romOffset + i) % romSize;
+                if (dst < rdramView.length) {
+                    rdramView[dst] = romView[src];
                 }
             }
             const firstBytes = Array.from(rdramView.subarray(ramAddr, ramAddr + 16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
-            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)}. First 16 bytes: ${firstBytes}`);
+            console.log(`PI DMA Completed: copied ${length} bytes to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffset.toString(16)}). First 16 bytes: ${firstBytes}`);
         }
 
         // Simulate DMA delay (More realistic timing for PI DMA)
