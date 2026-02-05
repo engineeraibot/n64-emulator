@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const framebufferTexture = new THREE.DataTexture(framebuffer, FB_WIDTH, FB_HEIGHT, THREE.RGBAFormat);
-    framebufferTexture.flipY = true;
+    framebufferTexture.flipY = false;
     framebufferTexture.needsUpdate = true;
 
     const geometry = new THREE.PlaneGeometry(2, 2);

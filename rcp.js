@@ -191,7 +191,7 @@ class RCP {
             case 0x3C: // Set Combine
                 this.rspState.combine.hi = hi & 0xFFFFFF;
                 this.rspState.combine.lo = lo;
-                this.rspState.useTexture = ((hi & 0x00F00000) !== 0) || ((lo & 0x000000F0) !== 0);
+                this.updateUseTexture(hi, lo);
                 break;
             case 0x3D: // Set Texture Image
                 this.rspState.textureImage = lo & 0x7FFFFF;
@@ -435,8 +435,7 @@ class RCP {
                 case 0xFC: // G_SETCOMBINE
                     this.rspState.combine.hi = hi & 0xFFFFFF;
                     this.rspState.combine.lo = lo;
-                    // If any of the color sources is TEXEL0 or TEXEL1
-                    this.rspState.useTexture = ((hi & 0x00F00000) !== 0) || ((lo & 0x000000F0) !== 0);
+                    this.updateUseTexture(hi, lo);
                     break;
                 case 0xF6: // G_FILLRECT
                     this.handleG_FILLRECT(hi, lo);
@@ -488,6 +487,21 @@ class RCP {
                     break;
             }
         }
+    }
+
+    updateUseTexture(hi, lo) {
+        const a = (hi >> 20) & 0xf;
+        const b = (hi >> 15) & 0x1f;
+        const c = (hi >> 10) & 0x1f;
+        const d = (hi >> 6) & 0x7;
+        const Aa = (lo >> 12) & 0x7;
+        const Ab = (lo >> 9) & 0x7;
+        const Ac = (lo >> 6) & 0x7;
+        const Ad = (lo >> 3) & 0x7;
+
+        const isTex = (src) => src === 0 || src === 1; // 0: TEXEL0, 1: TEXEL1
+        this.rspState.useTexture = isTex(a) || isTex(b) || isTex(c) || isTex(d) ||
+                                   isTex(Aa) || isTex(Ab) || isTex(Ac) || isTex(Ad);
     }
 
     resolveAddress(addr) {
@@ -919,6 +933,35 @@ class RCP {
                     a = (val & 0xF) << 4;
                 }
             }
+        } else if (tile.format === 2) { // CI (Color Index)
+            if (tile.size === 0) { // CI4 (4-bit)
+                const addr = tmemAddr + (texT * lineBytes + (texS >> 1));
+                if (addr < 4096) {
+                    const byte = this.tmem[addr];
+                    const index = (texS & 1) ? (byte & 0xF) : (byte >> 4);
+                    const palAddr = 0x800 + (tile.palette * 16 + index) * 2;
+                    if (palAddr + 1 < 4096) {
+                        const val = (this.tmem[palAddr] << 8) | this.tmem[palAddr + 1];
+                        r = ((val >> 11) & 0x1F) << 3;
+                        g = ((val >> 6) & 0x1F) << 3;
+                        b = ((val >> 1) & 0x1F) << 3;
+                        a = (val & 1) ? 255 : 0;
+                    }
+                }
+            } else if (tile.size === 1) { // CI8 (8-bit)
+                const addr = tmemAddr + (texT * lineBytes + texS);
+                if (addr < 4096) {
+                    const index = this.tmem[addr];
+                    const palAddr = 0x800 + index * 2;
+                    if (palAddr + 1 < 4096) {
+                        const val = (this.tmem[palAddr] << 8) | this.tmem[palAddr + 1];
+                        r = ((val >> 11) & 0x1F) << 3;
+                        g = ((val >> 6) & 0x1F) << 3;
+                        b = ((val >> 1) & 0x1F) << 3;
+                        a = (val & 1) ? 255 : 0;
+                    }
+                }
+            }
         }
         return { r, g, b, a };
     }
@@ -937,6 +980,9 @@ class RCP {
         const getVal = (src, isAlpha) => {
             switch (src) {
                 case 0: return isAlpha ? texel0.a : {r: texel0.r, g: texel0.g, b: texel0.b}; // TEXEL0
+                case 1: { // TEXEL1 (Simplified to TEXEL0 for now if not multi-texturing)
+                    return isAlpha ? texel0.a : {r: texel0.r, g: texel0.g, b: texel0.b};
+                }
                 case 4: return isAlpha ? shade.a : {r: shade.r, g: shade.g, b: shade.b};     // SHADE
                 case 3: { // PRIMITIVE
                     const p = this.rspState.primColor;

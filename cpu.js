@@ -28,6 +28,8 @@ class CPU {
         this.warnedOpcodes = new Set();
         this.warnedSpecial = new Set();
         this.warnedExceptions = new Set();
+        this.pcHistory = new BigUint64Array(1000);
+        this.pcHistoryIdx = 0;
     }
 
     run() {
@@ -119,6 +121,8 @@ class CPU {
 
     step() {
         this.instructionCount++;
+        this.pcHistory[this.pcHistoryIdx] = this.pc;
+        this.pcHistoryIdx = (this.pcHistoryIdx + 1) % 1000;
 
         // Count register increments at half CPU frequency
         if ((this.instructionCount & 1) === 0) {
@@ -1047,6 +1051,11 @@ class CPU {
         if (code !== 0) {
             const instruction = this.mmu.read32(Number(pc));
             console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')}) EXL=${status & 2n}`);
+            console.log("Recent PC History:");
+            for (let i = 0; i < 10; i++) {
+                const idx = (this.pcHistoryIdx - 1 - i + 1000) % 1000;
+                console.log(`  - 0x${this.pcHistory[idx].toString(16)}`);
+            }
         }
         return null;
     }
