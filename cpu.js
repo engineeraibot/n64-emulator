@@ -84,6 +84,19 @@ class CPU {
         // Copy the boot segment from ROM 0x1000 to RAM
         const ramOffset = Number(entryPoint & 0x00FFFFFFn);
         const segmentSize = Math.min(romView.length - 0x1000, rdramView.length - ramOffset);
+
+        // Load kernel at 0x400 (standard for skipping IPL3)
+        const kSize = Math.min(0x100000, romView.length - 0x1000);
+        rdramView.set(romView.subarray(0x1000, 0x1000 + kSize), 0x400);
+
+        // Install jump-to-handler at exception vectors
+        const j400 = 0x08000100; // J 0x80000400
+        const rdv_rd = new DataView(memory.rdram.buffer || memory.rdram);
+        rdv_rd.setUint32(0x000, j400, false);
+        rdv_rd.setUint32(0x080, j400, false);
+        rdv_rd.setUint32(0x100, j400, false);
+        rdv_rd.setUint32(0x180, j400, false);
+
         if (segmentSize > 0) {
             rdramView.set(romView.subarray(0x1000, 0x1000 + segmentSize), ramOffset);
             console.log(`HLE Boot: Loaded ${segmentSize} bytes to RAM 0x${ramOffset.toString(16)}`);
@@ -1050,6 +1063,7 @@ class CPU {
         }
         this.pc = vector;
         this.exceptionRaised = true;
+        this.branchTaken = false; // Critical: reset branch flag
         if (code !== 0) {
             const instruction = this.mmu.read32(Number(pc));
             console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')}) EXL=${status & 2n}`);

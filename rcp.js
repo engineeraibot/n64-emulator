@@ -398,8 +398,8 @@ class RCP {
                 case 0xB2: // G_MODIFYVTX
                     break;
                 case 0xDB: // G_SETSEGMENT
-                    const seg = (hi >>> 2) & 0xF;
-                    this.rspState.segments[seg] = lo & 0xFFFFFF;
+                    const seg = (hi >>> 8) & 0xF;
+                    this.rspState.segments[seg] = lo & 0x00FFFFFF;
                     break;
                 case 0xB6: // G_MOVEWORD (F3DEX2)
                     this.handleG_MOVEWORD(hi, lo);
@@ -408,17 +408,16 @@ class RCP {
                     this.handleG_MOVEMEM(hi, lo);
                     break;
                 case 0xFD: // G_SETTIMG
-                    this.rspState.textureImage = lo & 0x7FFFFF;
+                    this.rspState.textureImage = lo & 0x00FFFFFF;
                     break;
                 case 0xFF: // G_SETCIMG
-                    this.rspState.colorImage = lo & 0x7FFFFF;
-                    this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
+                    this.rspState.colorImage = lo & 0x00FFFFFF;
+                    this.rspState.colorImageWidth = (hi & 0x00000FFF) + 1;
                     this.rspState.colorImageFormat = (hi >>> 21) & 0x7;
                     this.rspState.colorImageSize = (hi >>> 19) & 0x3;
-                    console.log(`G_SETCIMG: Addr=0x${this.rspState.colorImage.toString(16)} Width=${this.rspState.colorImageWidth} Format=${this.rspState.colorImageFormat} Size=${this.rspState.colorImageSize}`);
                     break;
                 case 0xFE: // G_SETZIMG
-                    this.rspState.depthImage = lo & 0x7FFFFF;
+                    this.rspState.depthImage = lo & 0x00FFFFFF;
                     break;
                 case 0xF5: // G_SETTILE
                     this.handleG_SETTILE(hi, lo);
@@ -740,10 +739,10 @@ class RCP {
     }
 
     handleG_FILLRECT(hi, lo) {
-        const x1 = (hi >>> 12) & 0xFFF;
-        const y1 = (hi >>> 0) & 0xFFF;
-        const x2 = (lo >>> 12) & 0xFFF;
-        const y2 = (lo >>> 0) & 0xFFF;
+        const x2 = (hi >>> 12) & 0x0FFF;
+        const y2 = (hi >>> 0) & 0x0FFF;
+        const x1 = (lo >>> 12) & 0x0FFF;
+        const y1 = (lo >>> 0) & 0x0FFF;
 
         const addr = this.rspState.colorImage;
         if ((this.mmu.cpu.instructionCount & 0xFFF) === 0) {
