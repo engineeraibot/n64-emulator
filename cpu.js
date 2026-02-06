@@ -91,25 +91,27 @@ class CPU {
 
         console.log(`HLE Boot: Entry Point=0x${entryPoint.toString(16)}, RAM Offset=0x${ramOffset.toString(16)}`);
 
-        // Initialize registers as IPL3 would for CIC-6102
+        // Initialize registers as IPL3 would for CIC-6102/6103
         this.gpr[29] = BigInt.asIntN(32, 0x80370000n); // sp
         this.gpr[31] = 0n; // ra: standard is 0
         this.gpr[16] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0, false))); // s0: ROM Info
-        this.gpr[17] = 0x00000001n; // s1: CIC type (1 for 6102)
-        this.gpr[18] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x10, false))); // s2: Checksum part 1 from ROM header
-        this.gpr[11] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x14, false))); // t3: Checksum part 2 from ROM header
+
+        // Detect PAL SM64 which often uses CIC-6103
+        const isPal = (romDataView.getUint8(0x3E) === 0x50); // 'P' for Europe
+        this.gpr[17] = isPal ? 0x00000002n : 0x00000001n; // s1: CIC type (1 for 6102, 2 for 6103)
+
+        this.gpr[18] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x10, false))); // s2: Checksum part 1
+        this.gpr[11] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x14, false))); // t3: Checksum part 2
 
         // Initial Status: CU0=1, CU1=1, BEV=0, EXL=0, IE=0
-        this.cp0Registers[12] = 0x30000000n;
+        this.cp0Registers[12] = 0x34000000n; // Enable CU0, CU1, and set FR bit for 64-bit FPU if needed
 
-        // Set up basic exception vector pointers if necessary
-        // Most games will overwrite these anyway.
-
-        // Initialize PIF RAM for CIC-6102
+        // Initialize PIF RAM for CIC-6102/6103
         this.mmu.pifRam[0x24] = 0x00;
         this.mmu.pifRam[0x25] = 0x00;
         this.mmu.pifRam[0x26] = 0x3F;
         this.mmu.pifRam[0x27] = 0x3F;
+        this.mmu.pifRam[0x3F] = 0x00; // Status byte
 
         this.isHleBootDone = true;
     }
@@ -133,7 +135,7 @@ class CPU {
         }
 
         // Check for interrupts periodically
-        if ((this.instructionCount & 0x3F) === 0) {
+        if ((this.instructionCount & 0x1F) === 0) {
             this.mmu.checkInternalEvents();
 
             // Update Cause IP2 from MI_INTR_REG & MI_INTR_MASK_REG
@@ -844,8 +846,8 @@ class CPU {
         } else if (sub === 0x05) { // DMTC1
             this.fprView.setBigInt64(fs * 8, this.gpr[rt], false);
         } else if (sub === 0x02) { // CFC1
-            if (fs === 0) this.gpr[rt] = BigInt(this.fcr0);
-            else if (fs === 31) this.gpr[rt] = BigInt(this.fcr31);
+            if (fs === 0) this.gpr[rt] = BigInt.asIntN(32, BigInt(this.fcr0));
+            else if (fs === 31) this.gpr[rt] = BigInt.asIntN(32, BigInt(this.fcr31));
         } else if (sub === 0x06) { // CTC1
             if (fs === 31) this.fcr31 = Number(this.gpr[rt] & 0xFFFFFFFFn);
         } else if (sub >= 0x10) { // FPU Instructions

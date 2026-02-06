@@ -406,12 +406,18 @@ class MMU {
     }
 
     doPiDma(cartToDram) {
-        const ramAddr = this.piRegisters[0] & 0x007FFFFF; // Mask for 8MB RDRAM
-        const cartAddr = this.piRegisters[1] & 0x1FFFFFFF;
+        // PI_DRAM_ADDR_REG: bit 0 is ignored, masked to RDRAM range
+        const ramAddr = this.piRegisters[0] & 0x007FFFFE;
+        // PI_CART_ADDR_REG: bits 0-1 are ignored, top 4 bits (28-31) select domain
+        const cartAddr = this.piRegisters[1] & 0x0FFFFFFC;
         // Mask length to 24 bits
         const length = ((cartToDram ? (this.piRegisters[3] & 0x00FFFFFF) : (this.piRegisters[2] & 0x00FFFFFF))) + 1;
 
-        const romOffsetBase = cartAddr & 0x0FFFFFFF;
+        // Use lower 28 bits as offset and apply mirroring by ROM size.
+        // This handles standard Domain 1 (0x10000000) and various mirrors (Domain 2, etc.)
+        // Note: cartAddr is already masked to 28 bits above.
+        const romOffsetBase = cartAddr;
+
         console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}) Len=0x${length.toString(16)}`);
         this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
 
@@ -419,10 +425,6 @@ class MMU {
             const rdramView = new Uint8Array(this.memory.rdram);
             const romView = new Uint8Array(this.memory.rom);
             const romSize = this.memory.rom.byteLength;
-
-            // Use lower 28 bits as offset and apply mirroring by ROM size.
-            // This handles standard Domain 1 (0x10000000) and various mirrors (Domain 2, etc.)
-            const romOffsetBase = cartAddr & 0x0FFFFFFF;
 
             // Optimized copy loop: only iterate up to available RDRAM space
             const limit = Math.min(length, rdramView.length - ramAddr);
@@ -442,7 +444,7 @@ class MMU {
     }
 
     doSiDma(isToPif) {
-        const ramAddr = this.siRegisters[0] & 0x007FFFFF; // Mask to 8MB
+        const ramAddr = this.siRegisters[0] & 0x007FFFFC; // Mask to 8MB and align
         const rdramView = new Uint8Array(this.memory.rdram);
         this.siRegisters[6] |= 0x01; // Busy
 
