@@ -353,8 +353,13 @@ class CPU {
             case 0x0D: return this.raiseException(9, currentPc, isDelaySlot); // BREAK
             case 0x0E: break; // Unknown NOP used in SM64 PAL
             case 0x0F: break; // SYNC
-            case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
-            case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
+            case 0x08:
+                if (this.gpr[rs] > 0xFFFFFFFFn || (this.gpr[rs] < 0n && this.gpr[rs] < -0x80000000n)) {
+                    // console.warn(`JR to weird address: 0x${BigInt.asUintN(64, this.gpr[rs]).toString(16)} at PC 0x${currentPc.toString(16)}`);
+                }
+                this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
+            case 0x09:
+                this.branchTarget = this.gpr[rs]; this.gpr[rd] = currentPc + 8n; this.branchTaken = true; break;
             case 0x10: this.gpr[rd] = this.hi; break; // MFHI
             case 0x11: this.hi = this.gpr[rs]; break; // MTHI
             case 0x12: this.gpr[rd] = this.lo; break; // MFLO
@@ -1064,9 +1069,10 @@ class CPU {
         this.pc = vector;
         this.exceptionRaised = true;
         this.branchTaken = false; // Critical: reset branch flag
-        if (code !== 0) {
+        if (code !== 0 && !this.warnedExceptions.has(pc)) {
             const instruction = this.mmu.read32(Number(pc));
             console.warn(`Exception ${code} at PC 0x${BigInt.asUintN(32, pc).toString(16)} (Instr: 0x${instruction.toString(16).padStart(8, '0')}) EXL=${status & 2n}`);
+            if (this.warnedExceptions.size < 100) this.warnedExceptions.add(pc);
             console.log("Recent PC History:");
             for (let i = 0; i < 10; i++) {
                 const idx = (this.pcHistoryIdx - 1 - i + 1000) % 1000;

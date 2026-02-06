@@ -117,6 +117,7 @@ class RCP {
         this.rdpCommandCount++;
         const cmd = (hi >>> 24) & 0x3F;
         let consumed = 8;
+        const rdramView = new DataView(this.mmu.memory.rdram);
 
         // Ensure we have rspState even for direct RDP commands
         if (!this.rspState) {
@@ -145,7 +146,9 @@ class RCP {
         switch (cmd) {
             case 0x24: // Texture Rectangle
             case 0x25: // Texture Rectangle Flip
-                consumed = 24;
+                consumed = 16; // In RDP direct, extra params are separate commands?
+                // Wait, some microcodes use 32 bytes.
+                // For now let's check if there are 2 more words.
                 this.handleG_TEXRECT(hi, lo, addr, cmd === 0x25);
                 break;
             case 0x2D: // Set Scissor
@@ -335,6 +338,7 @@ class RCP {
     executeDisplayList(addr) {
         const rdramView = new DataView(this.mmu.memory.rdram);
         let pc = addr;
+        this.rdpCommandCount = 0;
         let depth = 0;
         const stack = [];
 
@@ -342,6 +346,7 @@ class RCP {
             const hi = rdramView.getUint32(pc & 0x7FFFFF, false);
             const lo = rdramView.getUint32((pc + 4) & 0x7FFFFF, false);
             pc += 8;
+            this.rdpCommandCount++;
 
             const cmd = (hi >>> 24) & 0xFF;
             switch (cmd) {
@@ -398,8 +403,9 @@ class RCP {
                 case 0xB2: // G_MODIFYVTX
                     break;
                 case 0xDB: // G_SETSEGMENT
-                    const seg = (hi >>> 8) & 0xF;
+                    const seg = (hi >> 2) & 0xF;
                     this.rspState.segments[seg] = lo & 0x00FFFFFF;
+                    console.log(`G_SETSEGMENT: Seg ${seg} = 0x${this.rspState.segments[seg].toString(16)}`);
                     break;
                 case 0xB6: // G_MOVEWORD (F3DEX2)
                     this.handleG_MOVEWORD(hi, lo);
@@ -408,16 +414,17 @@ class RCP {
                     this.handleG_MOVEMEM(hi, lo);
                     break;
                 case 0xFD: // G_SETTIMG
-                    this.rspState.textureImage = lo & 0x00FFFFFF;
+                    this.rspState.textureImage = this.resolvePhysicalAddress(lo) & 0x00FFFFFF;
                     break;
                 case 0xFF: // G_SETCIMG
-                    this.rspState.colorImage = lo & 0x00FFFFFF;
+                    this.rspState.colorImage = this.resolvePhysicalAddress(lo) & 0x00FFFFFF;
                     this.rspState.colorImageWidth = (hi & 0x00000FFF) + 1;
                     this.rspState.colorImageFormat = (hi >>> 21) & 0x7;
                     this.rspState.colorImageSize = (hi >>> 19) & 0x3;
+                    console.log(`G_SETCIMG: Addr=0x${this.rspState.colorImage.toString(16)} Width=${this.rspState.colorImageWidth} Size=${this.rspState.colorImageSize}`);
                     break;
                 case 0xFE: // G_SETZIMG
-                    this.rspState.depthImage = lo & 0x00FFFFFF;
+                    this.rspState.depthImage = this.resolvePhysicalAddress(lo) & 0x00FFFFFF;
                     break;
                 case 0xF5: // G_SETTILE
                     this.handleG_SETTILE(hi, lo);
@@ -505,7 +512,12 @@ class RCP {
 
     resolveAddress(addr) {
         const seg = (addr >>> 24) & 0xF;
-        return (this.rspState.segments[seg] & 0xFFFFFF) + (addr & 0xFFFFFF) + 0x80000000;
+        return (this.rspState.segments[seg] & 0x00FFFFFF) + (addr & 0x00FFFFFF) + 0x80000000;
+    }
+
+    resolvePhysicalAddress(addr) {
+        const seg = (addr >>> 24) & 0xF;
+        return (this.rspState.segments[seg] & 0x00FFFFFF) + (addr & 0x00FFFFFF);
     }
 
     handleG_VTX(hi, lo) {
@@ -1040,34 +1052,24 @@ class RCP {
     }
 
     handleG_TEXRECT(hi, lo, addr, flip) {
-        // G_TEXRECT is 3 words (24 bytes)
-        // Word 0: 24 XL YL (XL, YL are 10.2)
-        // Word 1: ?? XH YH (XH, YH are 10.2)
-        // Word 2: (G_RDPHALF_1) S T (S, T are 10.5)
-        // Word 3: (G_RDPHALF_2) dSdT dSdT (10.5)
-        // Actually in RDP direct it's 3 words.
+        // RDP Direct G_TEXRECT is often followed by state in subsequent words
         const rdramView = new DataView(this.mmu.memory.rdram);
-        const w1hi = rdramView.getUint32(addr + 8, false);
-        const w1lo = rdramView.getUint32(addr + 12, false);
-        const w2hi = rdramView.getUint32(addr + 16, false);
-        const w2lo = rdramView.getUint32(addr + 20, false);
-
-        const x2 = (hi >>> 12) & 0xFFF;
-        const y2 = hi & 0xFFF;
+        const xh = (hi >>> 12) & 0xFFF;
+        const yh = hi & 0xFFF;
+        const xl = (lo >>> 12) & 0xFFF;
+        const yl = lo & 0xFFF;
         const tile = (lo >>> 24) & 0x7;
-        const x1 = (lo >>> 12) & 0xFFF;
-        const y1 = lo & 0xFFF;
 
-        const s = (w1hi >>> 16) & 0xFFFF;
-        const t = w1hi & 0xFFFF;
-        const dsdx = (w1lo >>> 16) & 0xFFFF;
-        const dtdy = w1lo & 0xFFFF;
+        // We assume the next two words contain S, T, dsdx, dtdy (Common for F3D)
+        const s = rdramView.getUint16((addr + 8) & 0x7FFFFF, false);
+        const t = rdramView.getUint16((addr + 10) & 0x7FFFFF, false);
+        const dsdx = rdramView.getInt16((addr + 12) & 0x7FFFFF, false);
+        const dtdy = rdramView.getInt16((addr + 14) & 0x7FFFFF, false);
 
-        // Simplified: draw as two triangles or just a rect
-        const v1 = { x: x1/4, y: y1/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: t };
-        const v2 = { x: x2/4, y: y1/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (x2-x1)*dsdx/4, t: t };
-        const v3 = { x: x1/4, y: y2/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: t + (y2-y1)*dtdy/4 };
-        const v4 = { x: x2/4, y: y2/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (x2-x1)*dsdx/4, t: t + (y2-y1)*dtdy/4 };
+        const v1 = { x: xl/4, y: yl/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: t };
+        const v2 = { x: xh/4, y: yl/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh-xl)*dsdx/4, t: t };
+        const v3 = { x: xl/4, y: yh/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: t + (yh-yl)*dtdy/4 };
+        const v4 = { x: xh/4, y: yh/4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh-xl)*dsdx/4, t: t + (yh-yl)*dtdy/4 };
 
         this.rspState.currentTile = tile;
         this.drawTriangle(v1, v2, v3);
