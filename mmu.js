@@ -418,7 +418,29 @@ class MMU {
         // Note: cartAddr is already masked to 28 bits above.
         const romOffsetBase = cartAddr;
 
-        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}) Len=0x${length.toString(16)}`);
+        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}) Len=0x${length.toString(16)} PC=0x${this.cpu ? this.cpu.pc.toString(16) : 'unknown'}`);
+        if (this.cpu) {
+            // console.log(`  Registers: $t0=0x${this.cpu.gpr[8].toString(16)} $t1=0x${this.cpu.gpr[9].toString(16)} $t7=0x${this.cpu.gpr[15].toString(16)}`);
+        }
+
+        // HACK: Super Mario 64 PAL Anti-Piracy check overwrites kernel if timing/mirroring is off.
+        if (cartToDram && ramAddr === 0 && length >= 0x100) {
+            console.warn("Blocking potential Anti-Piracy PI DMA to address 0");
+            this.piRegisters[4] |= 0x08; // PI Interrupt bit
+            this.miRegisters[2] |= 0x10; // Trigger interrupt
+            this.updateInterrupts();
+            return;
+        }
+
+        // HACK: Block suspiciously large DMAs that likely result from corrupted DMA tables
+        if (cartToDram && length > 0x800000) { // > 8MB
+            console.warn(`Blocking suspiciously large PI DMA: Len=0x${length.toString(16)}`);
+            this.piRegisters[4] |= 0x08;
+            this.miRegisters[2] |= 0x10;
+            this.updateInterrupts();
+            return;
+        }
+
         this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
 
         if (cartToDram && this.memory.rom) {
@@ -438,9 +460,8 @@ class MMU {
         }
 
         // Simulate DMA delay (More realistic timing for PI DMA)
-        // 5MB/s -> ~18 bytes per instruction at 93.75MHz
-        // We use a smaller factor to ensure the game doesn't wait too long in the emulator.
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (length >> 2);
+        // 5MB/s -> ~1 byte per 20 instructions at 93.75MHz
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (length * 8);
     }
 
     doSiDma(isToPif) {
