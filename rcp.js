@@ -487,7 +487,7 @@ class RCP {
 
     handleG_LOADBLOCK(hi, lo) {
         const t = (lo >> 24) & 0x7;
-        const size = ((lo >> 12) & 0xFFF + 1) * 8;
+        const size = (((lo >> 12) & 0xFFF) + 1) * 8;
         const rd = new Uint8Array(this.mmu.memory.rdram);
         const off = this.rspState.tiles[t].tmem * 8;
         for (let i = 0; i < size && (off + i < 4096); i++) {

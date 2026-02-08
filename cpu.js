@@ -140,6 +140,7 @@ class CPU {
         const cause = this.cp0Registers[13];
         if ((status & 1n) && !(status & 2n) && ((status >> 8n) & (cause >> 8n) & 0xFFn)) {
             this.raiseException(0, this.pc, false);
+            return;
         }
 
         const currentPc = this.pc;
@@ -680,6 +681,10 @@ class CPU {
         if (this.instructionCount % 1000 === 0 || code !== 0) {
             const instr = this.mmu.read32(Number(pc));
             console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} t0=0x${this.gpr[8].toString(16)} t1=0x${this.gpr[9].toString(16)} v0=0x${this.gpr[2].toString(16)}`);
+            // Only log history on non-timer exceptions to avoid spam
+            if (code !== 0 || this.instructionCount % 1000000 === 0) {
+                console.warn("PC History:", Array.from(this.pcHistory).map(x => x.toString(16)).join(', '));
+            }
         }
         const status = this.cp0Registers[12], bev = (status >> 22n) & 1n;
         const vector = bev ? 0xBFC00380n : 0x80000180n;
