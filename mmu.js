@@ -156,6 +156,9 @@ class MMU {
             return this.aiRegisters[regIdx];
         }
 
+        // PIF ROM
+        if (p >= 0x1FC00000 && p <= 0x1FC007BF) return 0;
+
         // PIF RAM
         if (p >= 0x1FC007C0 && p <= 0x1FC007FF) return new DataView(this.pifRam.buffer).getUint32(p - 0x1FC007C0, false);
 
