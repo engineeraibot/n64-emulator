@@ -209,6 +209,7 @@ class MMU {
         const idx = (a - 0x04300000) >> 2;
         if (idx === 0) {
             this.miRegisters[0] = (this.miRegisters[0] & ~0x7F) | (v & 0x7F);
+            if (v & 0x0800) { this.miRegisters[2] &= ~0x20; this.updateInterrupts(); } // Clear DP Interrupt
         } else if (idx === 3) {
             const m = [
                 [0x1, 0x2, 0x1], [0x4, 0x8, 0x2], [0x10, 0x20, 0x4],
@@ -227,7 +228,8 @@ class MMU {
     handlePiWrite(a, v) {
         const idx = (a - 0x04600000) >> 2;
         if (idx === 4) { // PI_STATUS
-            if (v & 0x02) this.miRegisters[2] &= ~0x10;
+            if (v & 0x01) { this.piRegisters[4] &= ~0x03; this.piBusyUntil = 0; } // Reset PI
+            if (v & 0x02) this.miRegisters[2] &= ~0x10; // Clear PI Interrupt
             this.updateInterrupts();
         } else {
             this.piRegisters[idx] = v;
@@ -321,7 +323,7 @@ class MMU {
 
     doPiDma(c2d) {
         const ra = this.piRegisters[0] & 0x007FFFFE;
-        const ca = this.piRegisters[1] & 0x0FFFFFFC;
+        const ca = this.piRegisters[1] & 0x1FFFFFFC;
         const len = ((c2d ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
         console.log(`PI DMA: ${c2d ? 'ROM->RAM' : 'RAM->ROM'} src=0x${ca.toString(16)} dst=0x${ra.toString(16)} len=0x${len.toString(16)}`);
@@ -340,7 +342,6 @@ class MMU {
             } else {
                 for (let i = 0; i < actualLen; i++) {
                     const dst = (ra + i) & 0x7FFFFF;
-                    if (dst < 0x400 && isMirror) continue; // Anti-piracy mitigation
                     rd[dst] = rv[(ca + i) % rs];
                 }
             }
