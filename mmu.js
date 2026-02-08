@@ -1,514 +1,401 @@
 class MMU {
     static RDRAM_START = 0x00000000;
-    static RDRAM_END   = 0x007FFFFF; // Up to 8MB
-    static SP_DMEM_START = 0x04000000;
-    static SP_DMEM_END   = 0x04000FFF;
-    static SP_IMEM_START = 0x04001000;
-    static SP_IMEM_END   = 0x04001FFF;
-    static SP_REGS_START = 0x04040000;
-    static SP_REGS_END   = 0x0404001F;
-    static DPC_REGS_START = 0x04100000;
-    static DPC_REGS_END   = 0x0410001F;
-    static MI_REGS_START = 0x04300000;
-    static MI_REGS_END   = 0x0430000F;
-    static VI_REGS_START = 0x04400000;
-    static VI_REGS_END   = 0x04400037;
-    static AI_REGS_START = 0x04500000;
-    static PI_REGS_START = 0x04600000;
-    static PI_REGS_END   = 0x04600033;
-    static RI_REGS_START = 0x04700000;
-    static SI_REGS_START = 0x04800000;
-    static SI_REGS_END   = 0x0480001B;
-    static ROM_START     = 0x10000000;
-    static ROM_END       = 0x1FBFFFFF;
-    static PIF_ROM_START = 0x1FC00000;
-    static PIF_ROM_END   = 0x1FC007BF;
-    static PIF_RAM_START = 0x1FC007C0;
-    static PIF_RAM_END   = 0x1FC007FF;
+    static RDRAM_END = 0x007FFFFF;
 
     constructor(memory) {
         this.memory = memory;
-        this.rcp = null; // Set after RCP is created
-        this.cpu = null; // Set after CPU is created
+        this.rcp = null;
+        this.cpu = null;
+
         this.piBusyUntil = 0;
         this.siBusyUntil = 0;
         this.aiBusyUntil = 0;
         this.viNextInterrupt = 0;
+
         this.viRegisters = new Uint32Array(14);
         this.miRegisters = new Uint32Array(4);
         this.piRegisters = new Uint32Array(13);
+
+        // PI configuration defaults
+        this.piRegisters[5] = 0x40;
+        this.piRegisters[6] = 0x12;
+        this.piRegisters[7] = 0x07;
+        this.piRegisters[8] = 0x03;
+        this.piRegisters[9] = 0x40;
+        this.piRegisters[10] = 0x12;
+        this.piRegisters[11] = 0x07;
+        this.piRegisters[12] = 0x03;
+
         this.siRegisters = new Uint32Array(7);
         this.spRegisters = new Uint32Array(8);
         this.dpcRegisters = new Uint32Array(8);
         this.aiRegisters = new Uint32Array(6);
         this.riRegisters = new Uint32Array(8);
-        this.riRegisters[0] = 0x0;       // RI_MODE
-        this.riRegisters[1] = 0x0;       // RI_CONFIG
-        this.riRegisters[2] = 0x0;       // RI_CURRENT_LOAD
-        this.riRegisters[3] = 0x14;      // RI_SELECT (Indicates 8MB)
-        this.riRegisters[4] = 0x63634;   // RI_REFRESH
-        this.pifRom = new Uint8Array(2048); // 2KB PIF ROM
-        this.pifRomView = new DataView(this.pifRom.buffer);
+
+        this.riRegisters[3] = 0x14;
+        this.riRegisters[4] = 0x63634;
+
+        this.pifRom = new Uint8Array(2048);
         this.pifRam = new Uint8Array(64);
-        this.pifRamView = new DataView(this.pifRam.buffer);
+
         this.spDmem = new Uint8Array(0x1000);
-        this.spDmemView = new DataView(this.spDmem.buffer);
         this.spImem = new Uint8Array(0x1000);
+        this.spDmemView = new DataView(this.spDmem.buffer);
         this.spImemView = new DataView(this.spImem.buffer);
+
         this.buttons = 0;
         this.stickX = 0;
         this.stickY = 0;
         this.eeprom = new Uint8Array(512);
     }
 
-    updateController(buttons, x, y) {
-        this.buttons = buttons;
+    updateController(b, x, y) {
+        this.buttons = b;
         this.stickX = x;
         this.stickY = y;
     }
 
     updateInterrupts() {
         if (this.cpu) {
-            const mi_intr = this.miRegisters[2] & this.miRegisters[3];
-            if (mi_intr) this.cpu.cp0Registers[13] |= 0x0400n;
-            else this.cpu.cp0Registers[13] &= ~0x0400n;
+            const pending = this.miRegisters[2] & this.miRegisters[3];
+            if (pending) {
+                this.cpu.cp0Registers[13] |= 0x0400n;
+            } else {
+                this.cpu.cp0Registers[13] &= ~0x0400n;
+            }
         }
     }
 
     checkInternalEvents() {
         const now = this.cpu ? this.cpu.instructionCount : 0;
-        let changed = false;
+
+        // PI DMA completion
         if (this.piBusyUntil > 0 && now >= this.piBusyUntil) {
             this.piRegisters[4] &= ~0x03;
-            this.miRegisters[2] |= 0x10; // Trigger interrupt
+            this.miRegisters[2] |= 0x10;
             this.piBusyUntil = 0;
-            console.log(`PI DMA Completed (Event) MI_INTR=0x${this.miRegisters[2].toString(16)}`);
-            changed = true;
+            this.updateInterrupts();
         }
+
+        // SI DMA completion
         if (this.siBusyUntil > 0 && now >= this.siBusyUntil) {
-            this.siRegisters[6] &= ~0x01; // Not busy
-            this.miRegisters[2] |= 0x02;  // SI Interrupt
+            this.siRegisters[6] &= ~0x01;
+            this.miRegisters[2] |= 0x02;
             this.siBusyUntil = 0;
-            console.log(`SI DMA Completed (Event) MI_INTR=0x${this.miRegisters[2].toString(16)}`);
-            changed = true;
+            this.updateInterrupts();
         }
+
+        // AI DMA completion
         if (this.aiBusyUntil > 0 && now >= this.aiBusyUntil) {
-            this.miRegisters[2] |= 0x04; // AI Interrupt
+            this.miRegisters[2] |= 0x04;
             this.aiBusyUntil = 0;
-            console.log(`AI DMA Completed (Event) MI_INTR=0x${this.miRegisters[2].toString(16)}`);
-            changed = true;
+            this.updateInterrupts();
         }
+
+        // VI Interrupt
         if (now >= this.viNextInterrupt) {
-            if (!(this.miRegisters[2] & 0x08)) {
-                this.miRegisters[2] |= 0x08; // VI Interrupt
-                // console.log(`VI Interrupt Triggered at Count ${now}`);
-                changed = true;
-            }
-            // Detect PAL vs NTSC for timing
-            const isPal = (this.viRegisters[6] > 600); // Usually 625 for PAL
-            const interval = isPal ? 1250000 : 1041666; // 50Hz or 60Hz
-            this.viNextInterrupt = now + interval;
+            this.miRegisters[2] |= 0x08;
+            this.updateInterrupts();
+            // PAL is 50Hz, NTSC is 60Hz. SM64 PAL uses ~50Hz.
+            this.viNextInterrupt = now + (this.viRegisters[6] > 0x240 ? 1875000 : 1562500);
         }
-        if (changed) this.updateInterrupts();
     }
 
-    read8(address) {
-        const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read8(physicalAddress);
-        else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom8(physicalAddress - MMU.ROM_START);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint8(physicalAddress - MMU.SP_DMEM_START);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint8(physicalAddress - MMU.SP_IMEM_START);
-        else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint8(physicalAddress - MMU.PIF_ROM_START);
-        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint8(physicalAddress - MMU.PIF_RAM_START);
-        return 0;
-    }
-    write8(address, value) {
-        const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write8(physicalAddress, value);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint8(physicalAddress - MMU.SP_DMEM_START, value);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint8(physicalAddress - MMU.SP_IMEM_START, value);
-        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
-            this.pifRam[physicalAddress - MMU.PIF_RAM_START] = value;
-            if (physicalAddress === MMU.PIF_RAM_END) this.handlePifCommand();
-        }
-        else {
-            // Basic support for 8-bit register writes if needed
-            const val32 = this.read32(address & ~3);
-            const shift = (3 - (physicalAddress & 3)) * 8;
-            const mask = ~(0xFF << shift);
-            this.write32(address & ~3, (val32 & mask) | (value << shift));
-        }
-    }
-    read16(address) {
-        const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read16(physicalAddress);
-        else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom16(physicalAddress - MMU.ROM_START);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint16(physicalAddress - MMU.SP_DMEM_START, false);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint16(physicalAddress - MMU.SP_IMEM_START, false);
-        else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint16(physicalAddress - MMU.PIF_ROM_START, false);
-        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint16(physicalAddress - MMU.PIF_RAM_START, false);
-        return 0;
-    }
-    write16(address, value) {
-        const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write16(physicalAddress, value);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint16(physicalAddress - MMU.SP_DMEM_START, value, false);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint16(physicalAddress - MMU.SP_IMEM_START, value, false);
-        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
-            this.pifRamView.setUint16(physicalAddress - MMU.PIF_RAM_START, value, false);
-            if (physicalAddress >= MMU.PIF_RAM_END - 1) this.handlePifCommand();
-        }
-        else {
-            // Basic support for 16-bit register writes
-            const val32 = this.read32(address & ~3);
-            if (physicalAddress & 2) {
-                this.write32(address & ~3, (val32 & 0xFFFF0000) | (value & 0xFFFF));
-            } else {
-                this.write32(address & ~3, (val32 & 0x0000FFFF) | ((value & 0xFFFF) << 16));
-            }
-        }
-    }
-    read32(address) {
-        const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x0480001B) {
-            // Log hardware register reads, but not too frequently
-            if ((this.cpu.instructionCount & 0xFFFF) === 0) {
-                 // console.log(`MMU Read Reg: 0x${physicalAddress.toString(16)}`);
-            }
-        }
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read32(physicalAddress);
-        else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom32(physicalAddress - MMU.ROM_START);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getUint32(physicalAddress - MMU.SP_DMEM_START, false);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getUint32(physicalAddress - MMU.SP_IMEM_START, false);
-        else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
-            const regIdx = (physicalAddress - MMU.VI_REGS_START) >> 2;
-            if (regIdx === 4) { // VI_CURRENT_REG
-                const sync = this.viRegisters[6] || 525;
-                return (Math.floor((this.cpu ? this.cpu.instructionCount : 0) / 3000) % sync);
-            }
-            return this.viRegisters[regIdx];
-        }
-        else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) {
-            const regIdx = (physicalAddress - MMU.PI_REGS_START) >> 2;
-            if (regIdx === 4) {
-                this.checkInternalEvents();
-                let status = this.piRegisters[4];
-                if (this.miRegisters[2] & 0x10) status |= 0x08; // Interrupt pending bit
-                return status;
-            }
-            return this.piRegisters[regIdx];
-        }
-        else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) {
-            const regIdx = (physicalAddress - MMU.MI_REGS_START) >> 2;
-            if (regIdx === 1) return 0x02020102; // MI_VERSION
-            if (regIdx === 2) {
-                this.checkInternalEvents();
-            }
-            return this.miRegisters[regIdx];
-        }
-        else if (physicalAddress >= MMU.SI_REGS_START && physicalAddress <= MMU.SI_REGS_END) return this.siRegisters[(physicalAddress - MMU.SI_REGS_START) >> 2];
-        else if (physicalAddress >= MMU.SP_REGS_START && physicalAddress <= MMU.SP_REGS_END) return this.spRegisters[(physicalAddress - MMU.SP_REGS_START) >> 2];
-        else if (physicalAddress >= MMU.DPC_REGS_START && physicalAddress <= MMU.DPC_REGS_END) return this.dpcRegisters[(physicalAddress - MMU.DPC_REGS_START) >> 2];
-        else if (physicalAddress >= MMU.AI_REGS_START && physicalAddress <= MMU.AI_REGS_START + 0x17) {
-            const regIdx = (physicalAddress - MMU.AI_REGS_START) >> 2;
-            if (regIdx === 1) { // AI_LEN_REG
+    read32(a) {
+        const p = this.translateAddress(a);
+
+        if (p <= 0x7FFFFF) return this.memory.read32(p);
+        if (p >= 0x10000000 && p <= 0x1FBFFFFF) return this.memory.readRom32(p - 0x10000000);
+
+        // DMEM / IMEM
+        if (p >= 0x04000000 && p <= 0x04000FFF) return this.spDmemView.getUint32(p - 0x04000000, false);
+        if (p >= 0x04001000 && p <= 0x04001FFF) return this.spImemView.getUint32(p - 0x04001000, false);
+
+        // VI Registers
+        if (p >= 0x04400000 && p <= 0x04400037) {
+            if (p === 0x04400010) { // VI_CURRENT
                 const now = this.cpu ? this.cpu.instructionCount : 0;
-                if (this.aiBusyUntil > now) return Number(this.aiBusyUntil - now);
-                return 0;
+                return Math.floor(now / 3000) % (this.viRegisters[6] || 525);
             }
-            if (regIdx === 3) { // AI_STATUS_REG
-                let status = 0;
-                if (this.aiBusyUntil > (this.cpu ? this.cpu.instructionCount : 0)) {
-                    status |= 0x40000000; // AI Busy (bit 30)
-                }
-                return status;
+            return this.viRegisters[(p - 0x04400000) >> 2];
+        }
+
+        // PI Registers
+        if (p >= 0x04600000 && p <= 0x04600033) {
+            this.checkInternalEvents();
+            let s = this.piRegisters[(p - 0x04600000) >> 2];
+            if (p === 0x04600010 && (this.miRegisters[2] & 0x10)) s |= 0x08;
+            return s;
+        }
+
+        // MI Registers
+        if (p >= 0x04300000 && p <= 0x0430000F) {
+            if (p === 0x04300004) return 0x02020102; // MI_VERSION
+            if (p === 0x04300008) this.checkInternalEvents();
+            return this.miRegisters[(p - 0x04300000) >> 2];
+        }
+
+        // SI Registers
+        if (p >= 0x04800000 && p <= 0x0480001B) {
+            return this.siRegisters[(p - 0x04800000) >> 2];
+        }
+
+        // SP Registers
+        if (p >= 0x04040000 && p <= 0x0404001F) return this.spRegisters[(p - 0x04040000) >> 2];
+
+        // DPC Registers
+        if (p >= 0x04100000 && p <= 0x0410001F) return this.dpcRegisters[(p - 0x04100000) >> 2];
+
+        // AI Registers
+        if (p >= 0x04500000 && p <= 0x04500017) {
+            const regIdx = (p - 0x04500000) >> 2;
+            if (regIdx === 3) { // AI_STATUS
+                const now = this.cpu ? this.cpu.instructionCount : 0;
+                return (this.aiBusyUntil > now) ? 0xC0000000 : 0;
             }
             return this.aiRegisters[regIdx];
         }
-        else if (physicalAddress >= MMU.RI_REGS_START && physicalAddress <= MMU.RI_REGS_START + 0x1F) return this.riRegisters[(physicalAddress - MMU.RI_REGS_START) >> 2];
-        else if (physicalAddress >= MMU.PIF_ROM_START && physicalAddress <= MMU.PIF_ROM_END) return this.pifRomView.getUint32(physicalAddress - MMU.PIF_ROM_START, false);
-        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) return this.pifRamView.getUint32(physicalAddress - MMU.PIF_RAM_START, false);
+
+        // PIF RAM
+        if (p >= 0x1FC007C0 && p <= 0x1FC007FF) return new DataView(this.pifRam.buffer).getUint32(p - 0x1FC007C0, false);
 
         return 0;
     }
-    write32(address, value) {
-        const physicalAddress = this.translateAddress(address);
 
-        // Detailed logging for hardware registers
-        if (physicalAddress >= 0x04000000 && physicalAddress <= 0x048000FF) {
-             console.log(`HW Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
-        }
+    write32(a, v) {
+        const p = this.translateAddress(a);
 
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write32(physicalAddress, value);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setUint32(physicalAddress - MMU.SP_DMEM_START, value, false);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setUint32(physicalAddress - MMU.SP_IMEM_START, value, false);
-        else if (physicalAddress >= MMU.VI_REGS_START && physicalAddress <= MMU.VI_REGS_END) {
-            const regIdx = (physicalAddress - MMU.VI_REGS_START) >> 2;
-            console.log(`VI Write: Reg ${regIdx} = 0x${value.toString(16)}`);
-            this.viRegisters[regIdx] = value;
-            if (regIdx === 4) { // VI_CURRENT_REG
-                if (this.miRegisters[2] & 0x08) {
-                    console.log("VI Interrupt Cleared");
-                    this.miRegisters[2] &= ~0x08; // Clear VI Interrupt
-                    this.updateInterrupts();
-                }
+        if (p <= 0x7FFFFF) {
+            this.memory.write32(p, v);
+        } else if (p >= 0x04000000 && p <= 0x04000FFF) {
+            this.spDmemView.setUint32(p - 0x04000000, v, false);
+        } else if (p >= 0x04001000 && p <= 0x04001FFF) {
+            this.spImemView.setUint32(p - 0x04001000, v, false);
+        } else if (p >= 0x04400000 && p <= 0x04400037) {
+            const idx = (p - 0x04400000) >> 2;
+            this.viRegisters[idx] = v;
+            if (idx === 4) { // VI_CURRENT clears interrupt
+                this.miRegisters[2] &= ~0x08;
+                this.updateInterrupts();
             }
-        }
-        else if (physicalAddress >= MMU.PI_REGS_START && physicalAddress <= MMU.PI_REGS_END) this.handlePiWrite(physicalAddress, value);
-        else if (physicalAddress >= MMU.MI_REGS_START && physicalAddress <= MMU.MI_REGS_END) this.handleMiWrite(physicalAddress, value);
-        else if (physicalAddress >= MMU.SI_REGS_START && physicalAddress <= MMU.SI_REGS_END) this.handleSiWrite(physicalAddress, value);
-        else if (physicalAddress >= MMU.SP_REGS_START && physicalAddress <= MMU.SP_REGS_END) {
-            console.log(`SP Reg Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
-            if (this.rcp) this.rcp.handleSpWrite(physicalAddress, value);
-            else this.spRegisters[(physicalAddress - MMU.SP_REGS_START) >> 2] = value;
-        }
-        else if (physicalAddress >= MMU.DPC_REGS_START && physicalAddress <= MMU.DPC_REGS_END) {
-            console.log(`DPC Reg Write: 0x${physicalAddress.toString(16)} = 0x${value.toString(16)}`);
-            if (this.rcp) this.rcp.handleDpcWrite(physicalAddress, value);
-            else this.dpcRegisters[(physicalAddress - MMU.DPC_REGS_START) >> 2] = value;
-        }
-        else if (physicalAddress >= MMU.AI_REGS_START && physicalAddress <= MMU.AI_REGS_START + 0x17) this.handleAiWrite(physicalAddress, value);
-        else if (physicalAddress >= MMU.RI_REGS_START && physicalAddress <= MMU.RI_REGS_START + 0x1F) this.riRegisters[(physicalAddress - MMU.RI_REGS_START) >> 2] = value;
-        else if (physicalAddress >= MMU.PIF_RAM_START && physicalAddress <= MMU.PIF_RAM_END) {
-            this.pifRamView.setUint32(physicalAddress - MMU.PIF_RAM_START, value, false);
-            if (physicalAddress === MMU.PIF_RAM_END - 3) this.handlePifCommand();
+        } else if (p >= 0x04600000 && p <= 0x04600033) {
+            this.handlePiWrite(p, v);
+        } else if (p >= 0x04300000 && p <= 0x0430000F) {
+            this.handleMiWrite(p, v);
+        } else if (p >= 0x04800000 && p <= 0x0480001B) {
+            this.handleSiWrite(p, v);
+        } else if (p >= 0x04500000 && p <= 0x04500017) {
+            const regIdx = (p - 0x04500000) >> 2;
+            if (regIdx === 3) { // AI_STATUS write clears interrupt
+                this.miRegisters[2] &= ~0x04;
+                this.updateInterrupts();
+            } else {
+                this.aiRegisters[regIdx] = v;
+                if (regIdx === 1) this.aiBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 50000;
+            }
+        } else if (p >= 0x04040000 && p <= 0x0404001F) {
+            if (this.rcp) this.rcp.handleSpWrite(p, v);
+            else this.spRegisters[(p - 0x04040000) >> 2] = v;
+        } else if (p >= 0x04100000 && p <= 0x0410001F) {
+            if (this.rcp) this.rcp.handleDpcWrite(p, v);
+            else this.dpcRegisters[(p - 0x04100000) >> 2] = v;
+        } else if (p >= 0x1FC007C0 && p <= 0x1FC007FF) {
+            new DataView(this.pifRam.buffer).setUint32(p - 0x1FC007C0, v, false);
+            if (p === 0x1FC007FC) this.handlePifCommand();
         }
     }
 
-    handleMiWrite(address, value) {
-        const regIdx = (address - MMU.MI_REGS_START) >> 2;
-        if (regIdx === 0) { // MI_MODE_REG
-            this.miRegisters[0] = (this.miRegisters[0] & ~0x7F) | (value & 0x7F);
-            if (value & 0x0800) this.miRegisters[2] &= ~0x01; // Clear SP interrupt
-        } else if (regIdx === 3) { // MI_INTR_MASK_REG
-            if (value & 0x0001) this.miRegisters[3] &= ~0x01; if (value & 0x0002) this.miRegisters[3] |= 0x01; // SP
-            if (value & 0x0004) this.miRegisters[3] &= ~0x02; if (value & 0x0008) this.miRegisters[3] |= 0x02; // SI
-            if (value & 0x0010) this.miRegisters[3] &= ~0x04; if (value & 0x0020) this.miRegisters[3] |= 0x04; // AI
-            if (value & 0x0040) this.miRegisters[3] &= ~0x08; if (value & 0x0080) this.miRegisters[3] |= 0x08; // VI
-            if (value & 0x0100) this.miRegisters[3] &= ~0x10; if (value & 0x0200) this.miRegisters[3] |= 0x10; // PI
-            if (value & 0x0400) this.miRegisters[3] &= ~0x20; if (value & 0x0800) this.miRegisters[3] |= 0x20; // DP
+    handleMiWrite(a, v) {
+        const idx = (a - 0x04300000) >> 2;
+        if (idx === 0) {
+            this.miRegisters[0] = (this.miRegisters[0] & ~0x7F) | (v & 0x7F);
+        } else if (idx === 3) {
+            const m = [
+                [0x1, 0x2, 0x1], [0x4, 0x8, 0x2], [0x10, 0x20, 0x4],
+                [0x40, 0x80, 0x8], [0x100, 0x200, 0x10], [0x400, 0x800, 0x20]
+            ];
+            for (let i = 0; i < 6; i++) {
+                if (v & m[i][0]) this.miRegisters[3] &= ~m[i][2];
+                if (v & m[i][1]) this.miRegisters[3] |= m[i][2];
+            }
         } else {
-            this.miRegisters[regIdx] = value;
+            this.miRegisters[idx] = v;
         }
         this.updateInterrupts();
     }
 
-    handlePiWrite(address, value) {
-        const regIdx = (address - MMU.PI_REGS_START) >> 2;
-        console.log(`PI Write: Reg ${regIdx} = 0x${value.toString(16)}`);
-        if (regIdx === 4) { // PI_STATUS_REG
-            if (value & 0x01) { /* reset controller */ }
-            if (value & 0x02) {
-                console.log("PI Interrupt Cleared");
-                this.miRegisters[2] &= ~0x10; // Clear PI interrupt
-            }
+    handlePiWrite(a, v) {
+        const idx = (a - 0x04600000) >> 2;
+        if (idx === 4) { // PI_STATUS
+            if (v & 0x02) this.miRegisters[2] &= ~0x10;
             this.updateInterrupts();
         } else {
-            this.piRegisters[regIdx] = value;
-            if (regIdx === 2) this.doPiDma(false); // DRAM -> Cart
-            if (regIdx === 3) this.doPiDma(true);  // Cart -> DRAM
+            this.piRegisters[idx] = v;
+            if (idx === 2) this.doPiDma(false);
+            if (idx === 3) this.doPiDma(true);
         }
     }
 
-    handleSiWrite(address, value) {
-        const regIdx = (address - MMU.SI_REGS_START) >> 2;
-        console.log(`SI Write: Reg ${regIdx} = 0x${value.toString(16)}`);
-        if (regIdx === 6) { // SI_STATUS_REG
-             this.miRegisters[2] &= ~0x02; // Clear SI interrupt
-             this.updateInterrupts();
-             return;
-        }
-        this.siRegisters[regIdx] = value;
-        if (regIdx === 1 || regIdx === 4) this.doSiDma(regIdx === 4);
-    }
-
-    handleAiWrite(address, value) {
-        const regIdx = (address - MMU.AI_REGS_START) >> 2;
-        if (regIdx === 3) { // AI_STATUS_REG
-            this.miRegisters[2] &= ~0x04; // Clear AI Interrupt
+    handleSiWrite(a, v) {
+        const idx = (a - 0x04800000) >> 2;
+        if (idx === 6) { // SI_STATUS
+            this.miRegisters[2] &= ~0x02;
             this.updateInterrupts();
-            return;
-        }
-        this.aiRegisters[regIdx] = value;
-        if (regIdx === 1) { // AI_LEN_REG
-            // Simulate DMA completion with a delay
-            this.aiBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 50000;
-        } else if (regIdx === 2) { // AI_CONTROL_REG
-            if (value & 0x01) { /* DMA Enable */ }
+        } else {
+            this.siRegisters[idx] = v;
+            if (idx === 1 || idx === 4) this.doSiDma(idx === 4);
         }
     }
 
     handlePifCommand() {
-        console.log(`PIF Command Triggered: 0x${this.pifRam[0x3f].toString(16)}`);
-        if (this.pifRam[0x3F] === 0x08) {
-            console.log("PIF RAM: " + Array.from(this.pifRam.subarray(0, 16)).map(x => x.toString(16)).join(' '));
-            // Some games use 0x08 for PIF status check
-            this.pifRam[0x3F] = 0x00;
-            return;
-        }
-        if (this.pifRam[0x3F] === 0x01) {
-            // Basic HLE PIF command handling
+        const cmdByte = this.pifRam[0x3F];
+        if (cmdByte === 0) return;
+
+        if (cmdByte === 0x01) { // Joybus
             let i = 0;
+            let channel = 0;
             while (i < 0x3F) {
                 if (this.pifRam[i] === 0xFF) { i++; continue; }
                 if (this.pifRam[i] === 0x00 || this.pifRam[i] === 0xFE) break;
 
-                const sendLen = this.pifRam[i] & 0x3F;
-                const recvLen = this.pifRam[i+1] & 0x3F;
-                if (sendLen === 0) { i += 2; continue; }
-                const cmd = this.pifRam[i+2];
-                const resIdx = i + 2 + sendLen;
-                if (resIdx >= 64) break;
+                const sl = this.pifRam[i] & 0x3F;
+                const rl = this.pifRam[i + 1] & 0x3F;
+                const cmd = this.pifRam[i + 2];
+                const res = i + 2 + sl;
 
-                console.log(`PIF CMD: 0x${cmd.toString(16)} send=${sendLen} recv=${recvLen}`);
-                if (cmd === 0x01 || cmd === 0xFF || cmd === 0x00) { // Read Controller or Info
-                    if (cmd === 0x00 || cmd === 0xFF) { // Info
-                        if (resIdx < 64) this.pifRam[resIdx] = 0x05;
-                        if (resIdx + 1 < 64) this.pifRam[resIdx+1] = 0x00;
-                        if (resIdx + 2 < 64) this.pifRam[resIdx+2] = 0x01;
-                    } else { // Read
-                        if (resIdx < 64) this.pifRam[resIdx] = (this.buttons >> 8) & 0xFF;
-                        if (resIdx + 1 < 64) this.pifRam[resIdx+1] = this.buttons & 0xFF;
-                        if (resIdx + 2 < 64) this.pifRam[resIdx+2] = this.stickX & 0xFF;
-                        if (resIdx + 3 < 64) this.pifRam[resIdx+3] = this.stickY & 0xFF;
-                    }
-                } else if (cmd === 0x04) { // EEPROM Read
-                    const block = this.pifRam[i+3];
-                    if (block < 64) {
-                        for (let j = 0; j < 8; j++) {
-                            if (resIdx + j < 64) this.pifRam[resIdx+j] = this.eeprom[block * 8 + j];
+                if (res >= 64) break;
+
+                let success = false;
+                if (channel < 4) { // Controllers
+                    if (channel === 0) {
+                        if (cmd === 0x00 || cmd === 0xFF) { // Info / Reset
+                            if (res + 2 < 64) {
+                                this.pifRam[res] = 0x05;
+                                this.pifRam[res + 1] = 0x00;
+                                this.pifRam[res + 2] = 0x01;
+                                success = true;
+                            }
+                        } else if (cmd === 0x01) { // Read
+                            if (res + 3 < 64) {
+                                this.pifRam[res] = (this.buttons >> 8);
+                                this.pifRam[res + 1] = this.buttons;
+                                this.pifRam[res + 2] = this.stickX;
+                                this.pifRam[res + 3] = this.stickY;
+                                success = true;
+                            }
                         }
                     }
-                } else if (cmd === 0x05) { // EEPROM Write
-                    const block = this.pifRam[i+3];
-                    if (block < 64) {
-                        for (let j = 0; j < 8; j++) {
-                            if (i+4+j < 64) this.eeprom[block * 8 + j] = this.pifRam[i+4+j];
+                } else { // EEPROM
+                    if (cmd === 0x00 || cmd === 0xFF) {
+                        if (res + 2 < 64) {
+                            this.pifRam[res] = 0x00;
+                            this.pifRam[res + 1] = 0x80;
+                            this.pifRam[res + 2] = 0x00;
+                            success = true;
+                        }
+                    } else if (cmd === 0x04) { // Read
+                        const b = this.pifRam[i + 3];
+                        if (b < 64) {
+                            for (let j = 0; j < 8; j++) if (res + j < 64) this.pifRam[res + j] = this.eeprom[b * 8 + j];
+                            success = true;
+                        }
+                    } else if (cmd === 0x05) { // Write
+                        const b = this.pifRam[i + 3];
+                        if (b < 64) {
+                            for (let j = 0; j < 8; j++) if (res + j < 64) this.eeprom[b * 8 + j] = this.pifRam[res + j];
+                            if (res < 64) this.pifRam[res] = 0x00;
+                            success = true;
                         }
                     }
-                    if (resIdx < 64) this.pifRam[resIdx] = 0; // Success
-                } else if (cmd === 0x02 || cmd === 0x03) { // Write/Read Status
-                    for (let j = 0; j < recvLen; j++) {
-                        if (resIdx + j < 64) this.pifRam[resIdx+j] = 0;
-                    }
-                } else {
-                    // Unknown command, skip it to avoid getting stuck
-                    console.warn(`Unknown PIF Joybus command: 0x${cmd.toString(16)}`);
                 }
-                // Support for end-of-block marker
-                if (resIdx + recvLen < 64) {
-                    this.pifRam[resIdx + recvLen] = 0xFE;
-                }
-                i += 2 + sendLen + recvLen;
+
+                if (!success && rl > 0) this.pifRam[i + 1] |= 0x80;
+                else this.pifRam[i + 1] &= 0x3F;
+
+                i += 2 + sl + rl;
+                channel++;
             }
-            this.pifRam[0x3F] = 0;
         }
+        this.pifRam[0x3F] = 0;
     }
 
-    doPiDma(cartToDram) {
-        // PI_DRAM_ADDR_REG: bit 0 is ignored, masked to RDRAM range
-        const ramAddr = this.piRegisters[0] & 0x007FFFFE;
-        // PI_CART_ADDR_REG: bits 0-1 are ignored, top 4 bits (28-31) select domain
-        const cartAddr = this.piRegisters[1] & 0x0FFFFFFC;
-        // Mask length to 24 bits
-        const length = ((cartToDram ? (this.piRegisters[3] & 0x00FFFFFF) : (this.piRegisters[2] & 0x00FFFFFF))) + 1;
+    doPiDma(c2d) {
+        const ra = this.piRegisters[0] & 0x007FFFFE;
+        const ca = this.piRegisters[1] & 0x0FFFFFFC;
+        const len = ((c2d ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
-        // Use lower 28 bits as offset and apply mirroring by ROM size.
-        // This handles standard Domain 1 (0x10000000) and various mirrors (Domain 2, etc.)
-        // Note: cartAddr is already masked to 28 bits above.
-        const romOffsetBase = cartAddr;
-
-        console.log(`PI DMA started: ${cartToDram ? 'ROM->RAM' : 'RAM->ROM'} RAM=0x${ramAddr.toString(16)} Cart=0x${cartAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}) Len=0x${length.toString(16)} PC=0x${this.cpu ? this.cpu.pc.toString(16) : 'unknown'}`);
-        if (this.cpu) {
-            // console.log(`  Registers: $t0=0x${this.cpu.gpr[8].toString(16)} $t1=0x${this.cpu.gpr[9].toString(16)} $t7=0x${this.cpu.gpr[15].toString(16)}`);
-        }
-
-        // HACK: Super Mario 64 PAL Anti-Piracy check overwrites kernel if timing/mirroring is off.
-        if (cartToDram && ramAddr === 0 && length >= 0x100) {
-            console.warn("Blocking potential Anti-Piracy PI DMA to address 0");
-            this.piRegisters[4] |= 0x08; // PI Interrupt bit
-            this.miRegisters[2] |= 0x10; // Trigger interrupt
-            this.updateInterrupts();
-            return;
-        }
-
-        // HACK: Block suspiciously large DMAs that likely result from corrupted DMA tables
-        if (cartToDram && length > 0x800000) { // > 8MB
-            console.warn(`Blocking suspiciously large PI DMA: Len=0x${length.toString(16)}`);
-            this.piRegisters[4] |= 0x08;
-            this.miRegisters[2] |= 0x10;
-            this.updateInterrupts();
-            return;
-        }
-
-        this.piRegisters[4] |= 0x03; // DMA Busy and IO Busy
-
-        if (cartToDram && this.memory.rom) {
-            const rdramView = new Uint8Array(this.memory.rdram);
-            const romView = new Uint8Array(this.memory.rom);
-            const romSize = this.memory.rom.byteLength;
-
-            // Optimized copy loop: only iterate up to available RDRAM space
-            const limit = Math.min(length, rdramView.length - ramAddr);
-            for (let i = 0; i < limit; i++) {
-                const dst = ramAddr + i;
-                let src = (romOffsetBase + i) % romSize; // Apply mirroring
-                rdramView[dst] = romView[src];
+        this.piRegisters[4] |= 0x03;
+        if (c2d && this.memory.rom) {
+            const rd = new Uint8Array(this.memory.rdram);
+            const rv = new Uint8Array(this.memory.rom);
+            const rs = rv.length;
+            for (let i = 0; i < len; i++) {
+                const dst = (ra + i) & 0x7FFFFF;
+                if (dst < 0x400 && ca >= 0x08000000) continue; // Anti-piracy mitigation
+                rd[dst] = rv[(ca + i) % rs];
             }
-            const firstBytes = Array.from(rdramView.subarray(ramAddr, Math.min(ramAddr + 16, rdramView.length))).map(x => x.toString(16).padStart(2, '0')).join(' ');
-            console.log(`PI DMA Completed: copied ${limit} bytes (requested ${length}) to RAM 0x${ramAddr.toString(16)} (Offset: 0x${romOffsetBase.toString(16)}). First 16 bytes: ${firstBytes}`);
         }
-
-        // Simulate DMA delay (More realistic timing for PI DMA)
-        // 5MB/s -> ~1 byte per 20 instructions at 93.75MHz
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (length * 8);
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (Math.min(len, 0x100000) * 17);
     }
 
-    doSiDma(isToPif) {
-        const ramAddr = this.siRegisters[0] & 0x007FFFFC; // Mask to 8MB and align
-        const rdramView = new Uint8Array(this.memory.rdram);
-        this.siRegisters[6] |= 0x01; // Busy
+    doSiDma(toPif) {
+        const ra = this.siRegisters[0] & 0x007FFFFC;
+        const rd = new Uint8Array(this.memory.rdram);
+        this.siRegisters[6] |= 0x01;
 
-        if (isToPif) {
-            // DRAM to PIF RAM
-            for (let i = 0; i < 64; i++) {
-                if (ramAddr + i < rdramView.length) this.pifRam[i] = rdramView[ramAddr + i];
-            }
+        if (toPif) {
+            for (let i = 0; i < 64; i++) if (ra + i < rd.length) this.pifRam[i] = rd[ra + i];
             this.handlePifCommand();
         } else {
-            // PIF RAM to DRAM
-            for (let i = 0; i < 64; i++) {
-                if (ramAddr + i < rdramView.length) rdramView[ramAddr + i] = this.pifRam[i];
-            }
+            for (let i = 0; i < 64; i++) if (ra + i < rd.length) rd[ra + i] = this.pifRam[i];
         }
-        // SI DMA takes ~4k-10k instructions for 64 bytes
-        this.siBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 5000;
-    }
-    read64(address) {
-        const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) return this.memory.read64(physicalAddress);
-        else if (physicalAddress >= MMU.ROM_START && physicalAddress <= MMU.ROM_END) return this.memory.readRom64(physicalAddress - MMU.ROM_START);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) return this.spDmemView.getBigUint64(physicalAddress - MMU.SP_DMEM_START, false);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) return this.spImemView.getBigUint64(physicalAddress - MMU.SP_IMEM_START, false);
-        return 0n;
-    }
-    write64(address, value) {
-        const physicalAddress = this.translateAddress(address);
-        if (physicalAddress >= MMU.RDRAM_START && physicalAddress <= MMU.RDRAM_END) this.memory.write64(physicalAddress, value);
-        else if (physicalAddress >= MMU.SP_DMEM_START && physicalAddress <= MMU.SP_DMEM_END) this.spDmemView.setBigUint64(physicalAddress - MMU.SP_DMEM_START, value, false);
-        else if (physicalAddress >= MMU.SP_IMEM_START && physicalAddress <= MMU.SP_IMEM_END) this.spImemView.setBigUint64(physicalAddress - MMU.SP_IMEM_START, value, false);
+        this.siBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 1100;
     }
 
-    translateAddress(address) {
-        if (typeof address === 'bigint') {
-            address = Number(address & 0xFFFFFFFFn) >>> 0;
-        } else {
-            address = address >>> 0;
+    read8(a) {
+        const p = this.translateAddress(a);
+        if (p <= 0x7FFFFF) return this.memory.read8(p);
+        const v = this.read32(p & ~3);
+        return (v >>> ((3 - (p & 3)) * 8)) & 0xFF;
+    }
+
+    write8(a, v) {
+        const p = this.translateAddress(a);
+        if (p <= 0x7FFFFF) this.memory.write8(p, v);
+    }
+
+    read16(a) {
+        const p = this.translateAddress(a);
+        if (p <= 0x7FFFFF) return this.memory.read16(p);
+        const v = this.read32(p & ~3);
+        return (p & 2) ? (v & 0xFFFF) : (v >>> 16);
+    }
+
+    write16(a, v) {
+        const p = this.translateAddress(a);
+        if (p <= 0x7FFFFF) this.memory.write16(p, v);
+    }
+
+    read64(a) {
+        const p = this.translateAddress(a);
+        if (p <= 0x7FFFFF) return this.memory.read64(p);
+        const hi = this.read32(p);
+        const lo = this.read32(p + 4);
+        return (BigInt(hi) << 32n) | BigInt(lo >>> 0);
+    }
+
+    write64(a, v) {
+        const p = this.translateAddress(a);
+        if (p <= 0x7FFFFF) {
+            this.memory.write64(p, v);
+            return;
         }
-        // KSEG0 & KSEG1 map to physical 0x00000000 - 0x1FFFFFFF
-        if (address >= 0x80000000 && address <= 0xBFFFFFFF) {
-            return address & 0x1FFFFFFF;
-        }
-        return address;
+        this.write32(p, Number(v >> 32n));
+        this.write32(p + 4, Number(v & 0xFFFFFFFFn));
+    }
+
+    translateAddress(a) {
+        const addr = (typeof a === 'bigint' ? Number(a & 0xFFFFFFFFn) : a) >>> 0;
+        return (addr >= 0x80000000 && addr <= 0xBFFFFFFF) ? (addr & 0x1FFFFFFF) : addr;
     }
 }
