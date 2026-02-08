@@ -149,13 +149,19 @@ class RCP {
         const dataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x30, false) & 0x7FFFFF;
         const yieldDataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x38, false) & 0x7FFFFF;
 
-        if (type === 4) { // MIO0 Decompression
-            const out = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr);
-            if (out) {
-                new Uint8Array(this.mmu.memory.rdram).set(out, yieldDataPtr);
+        console.log(`RSP Task: type=${type} dataPtr=0x${dataPtr.toString(16)}`);
+
+        try {
+            if (type === 4) { // MIO0 Decompression
+                const out = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr);
+                if (out) {
+                    new Uint8Array(this.mmu.memory.rdram).set(out, yieldDataPtr);
+                }
+            } else if (type === 1) { // Graphics
+                this.processDisplayList(dataPtr | 0x80000000);
             }
-        } else if (type === 1) { // Graphics
-            this.processDisplayList(dataPtr | 0x80000000);
+        } catch (e) {
+            console.error("RSP Task Error:", e);
         }
     }
 
