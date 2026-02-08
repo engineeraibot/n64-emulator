@@ -53,20 +53,6 @@ class Memory {
         this.rom = romBuffer;
         this.romView = new DataView(this.rom);
         console.log("ROM loaded and normalized.");
-
-        // Find all MIO0 blocks in the normalized ROM
-        const romBytes = new Uint8Array(this.rom);
-        const mio0Blocks = [];
-        const romDataView = new DataView(this.rom);
-        for (let i = 0; i < romBytes.length - 16; i++) {
-            if (romBytes[i] === 0x4D && romBytes[i+1] === 0x49 && romBytes[i+2] === 0x4F && romBytes[i+3] === 0x30) {
-                const destSize = romDataView.getUint32(i + 4, false);
-                mio0Blocks.push(`0x${i.toString(16)} (size: ${destSize})`);
-            }
-        }
-        console.log("MIO0 Blocks in normalized ROM: " + mio0Blocks.join(", "));
-        const lastBytes = Array.from(romBytes.slice(-16)).map(x => x.toString(16).padStart(2, '0')).join(' ');
-        console.log("Last 16 bytes of normalized ROM: " + lastBytes);
     }
 
     readRom8(address) {
