@@ -324,15 +324,25 @@ class MMU {
         const ca = this.piRegisters[1] & 0x0FFFFFFC;
         const len = ((c2d ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
+        console.log(`PI DMA: ${c2d ? 'ROM->RAM' : 'RAM->ROM'} src=0x${ca.toString(16)} dst=0x${ra.toString(16)} len=0x${len.toString(16)}`);
+
         this.piRegisters[4] |= 0x03;
         if (c2d && this.memory.rom) {
             const rd = new Uint8Array(this.memory.rdram);
             const rv = new Uint8Array(this.memory.rom);
             const rs = rv.length;
-            for (let i = 0; i < len; i++) {
-                const dst = (ra + i) & 0x7FFFFF;
-                if (dst < 0x400 && ca >= 0x08000000) continue; // Anti-piracy mitigation
-                rd[dst] = rv[(ca + i) % rs];
+            const isMirror = (ca & 0x01000000) || (ca & 0x08000000);
+            const actualLen = Math.min(len, 0x1000000); // Cap at 16MB for safety
+            const srcStart = ca % rs;
+
+            if (!isMirror && (ra + actualLen) <= 0x800000 && (srcStart + actualLen) <= rs) {
+                rd.set(rv.subarray(srcStart, srcStart + actualLen), ra);
+            } else {
+                for (let i = 0; i < actualLen; i++) {
+                    const dst = (ra + i) & 0x7FFFFF;
+                    if (dst < 0x400 && isMirror) continue; // Anti-piracy mitigation
+                    rd[dst] = rv[(ca + i) % rs];
+                }
             }
         }
         this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (Math.min(len, 0x100000) * 17);

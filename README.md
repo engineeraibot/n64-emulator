@@ -3,7 +3,7 @@
 A web-based Nintendo 64 emulator for mobile browsers.
 
 ## Current Status: Super Mario 64 Emulation
-Estimated completion: **99.6%**
+Estimated completion: **99.8%**
 
 ### Progress:
 - [x] CPU: Basic MIPS III/IV instructions (64-bit)
@@ -27,3 +27,6 @@ Estimated completion: **99.6%**
 - [x] RCP: Matrix stack and coordinate transformations (Required for 3D)
 - [x] RCP: Texture mapping and RDP Tile management
 - [x] Audio Interface (AI) implementation
+- [x] CPU: COP2/COP3 opcodes handled as NOPs (PAL compatibility)
+- [x] MMU: Optimized PI DMA with anti-piracy trap improvements
+- [x] RCP: Added try-catch and logging to RSP tasks

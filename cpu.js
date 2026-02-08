@@ -36,10 +36,10 @@ class CPU {
             if (!this.isRunning) return;
             const startTime = performance.now();
             let count = 0;
-            const budget = 1562500; // Aim for 50Hz fields at ~93.75MHz
+            const budget = 2000000; // Aim for ~100MHz peak
 
             while (count < budget) {
-                const batch = Math.min(10000, budget - count);
+                const batch = Math.min(50000, budget - count);
                 for (let i = 0; i < batch; i++) {
                     this.step();
                 }
@@ -113,6 +113,9 @@ class CPU {
         this.pcHistoryIdx = (this.pcHistoryIdx + 1) % 100;
 
         this.instructionCount++;
+        if ((this.instructionCount % 5000000) === 0) {
+            console.log(`CPU Status: PC=0x${this.pc.toString(16)} Instructions=${this.instructionCount}`);
+        }
 
         // CP0 Count register (half frequency)
         if ((this.instructionCount & 1) === 0) {
@@ -123,7 +126,7 @@ class CPU {
         }
 
         // Hardware events and interrupts
-        if ((this.instructionCount & 0x3F) === 0) this.mmu.checkInternalEvents();
+        if ((this.instructionCount & 0x3FF) === 0) this.mmu.checkInternalEvents();
 
         const miIntr = this.mmu.miRegisters[2];
         const miMask = this.mmu.miRegisters[3];
@@ -194,6 +197,7 @@ class CPU {
                 if (pc !== undefined) return pc;
                 break;
             }
+            case 0x12: case 0x13: break; // COP2, COP3 (NOP)
             case 0x1A: this.opLDL(instruction); break;
             case 0x1B: this.opLDR(instruction); break;
             case 0x20: this.opLB(instruction); break;
@@ -663,6 +667,10 @@ class CPU {
     }
 
     raiseException(code, pc, ds) {
+        if (this.instructionCount % 1000 === 0 || code !== 0) {
+            const instr = this.mmu.read32(Number(pc));
+            console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} t0=0x${this.gpr[8].toString(16)} t1=0x${this.gpr[9].toString(16)} v0=0x${this.gpr[2].toString(16)}`);
+        }
         const status = this.cp0Registers[12], bev = (status >> 22n) & 1n;
         const vector = bev ? 0xBFC00380n : 0x80000180n;
         this.cp0Registers[13] = (this.cp0Registers[13] & ~0x7Cn) | (BigInt(code) << 2n);
