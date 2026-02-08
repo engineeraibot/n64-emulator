@@ -36,15 +36,15 @@ class CPU {
             if (!this.isRunning) return;
             const startTime = performance.now();
             let count = 0;
-            const budget = 2000000; // Aim for ~100MHz peak
+            const budget = 4000000; // Increase budget for better performance
 
             while (count < budget) {
-                const batch = Math.min(50000, budget - count);
+                const batch = 100000;
                 for (let i = 0; i < batch; i++) {
                     this.step();
                 }
                 count += batch;
-                if (performance.now() - startTime >= 16) break;
+                if (performance.now() - startTime >= 10) break; // Reduced threshold for better UI responsiveness
             }
             setTimeout(runLoop, 0);
         };
@@ -302,7 +302,7 @@ class CPU {
             case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break;
             case 0x0C: return this.raiseException(8, pc, ds); // SYSCALL
             case 0x0D: return this.raiseException(9, pc, ds); // BREAK
-            case 0x0E: break; // Sync NOP
+            case 0x0E: case 0x0F: break; // Sync / PAL-specific Sync NOP
             case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
             case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = pc + 8n; this.branchTaken = true; break;
             case 0x10: this.gpr[rd] = this.hi; break;
@@ -529,24 +529,34 @@ class CPU {
     opSC(i) { this.opSW(i); this.gpr[(i >> 16) & 0x1F] = 1n; }
     opSCD(i) { this.opSD(i); this.gpr[(i >> 16) & 0x1F] = 1n; }
 
+    getFprAddr32(fs) {
+        const fr = (this.cp0Registers[12] & 0x04000000n) !== 0n;
+        if (!fr && (fs & 1)) return (fs - 1) * 8; // Upper 32 bits of even register
+        return fs * 8 + 4; // Lower 32 bits
+    }
+
     opLWC1(i) {
         const addr = Number(this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF)));
-        this.fprView.setUint32(((i >> 16) & 0x1F) * 8 + 4, this.mmu.read32(addr), false);
+        const fs = (i >> 16) & 0x1F;
+        this.fprView.setUint32(this.getFprAddr32(fs), this.mmu.read32(addr), false);
     }
 
     opLDC1(i) {
         const addr = Number(this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF)));
-        this.fprView.setBigUint64(((i >> 16) & 0x1F) * 8, this.mmu.read64(addr), false);
+        const fs = (i >> 16) & 0x1F;
+        this.fprView.setBigUint64(fs * 8, this.mmu.read64(addr), false);
     }
 
     opSWC1(i) {
         const addr = Number(this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF)));
-        this.mmu.write32(addr, this.fprView.getUint32(((i >> 16) & 0x1F) * 8 + 4, false));
+        const fs = (i >> 16) & 0x1F;
+        this.mmu.write32(addr, this.fprView.getUint32(this.getFprAddr32(fs), false));
     }
 
     opSDC1(i) {
         const addr = Number(this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF)));
-        this.mmu.write64(addr, this.fprView.getBigUint64(((i >> 16) & 0x1F) * 8, false));
+        const fs = (i >> 16) & 0x1F;
+        this.mmu.write64(addr, this.fprView.getBigUint64(fs * 8, false));
     }
 
     opCOP1(i, pc, ds) {
@@ -565,9 +575,9 @@ class CPU {
             return (t >= 2) ? pc + 8n : pc + 4n;
         }
 
-        if (sub === 0x00) this.gpr[rt] = BigInt.asIntN(32, BigInt(this.fprView.getUint32(fs * 8 + 4, false)));
+        if (sub === 0x00) this.gpr[rt] = BigInt.asIntN(32, BigInt(this.fprView.getUint32(this.getFprAddr32(fs), false)));
         else if (sub === 0x01) this.gpr[rt] = this.fprView.getBigInt64(fs * 8, false);
-        else if (sub === 0x04) this.fprView.setUint32(fs * 8 + 4, Number(this.gpr[rt] & 0xFFFFFFFFn), false);
+        else if (sub === 0x04) this.fprView.setUint32(this.getFprAddr32(fs), Number(this.gpr[rt] & 0xFFFFFFFFn), false);
         else if (sub === 0x05) this.fprView.setBigInt64(fs * 8, this.gpr[rt], false);
         else if (sub === 0x02) this.gpr[rt] = BigInt.asIntN(32, BigInt(fs === 0 ? this.fcr0 : this.fcr31));
         else if (sub === 0x06) { if (fs === 31) this.fcr31 = Number(this.gpr[rt] & 0xFFFFFFFFn); }
