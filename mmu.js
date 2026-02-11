@@ -105,7 +105,11 @@ class MMU {
         const p = this.translateAddress(a);
 
         if (p <= 0x7FFFFF) return this.memory.read32(p);
+        if (p >= 0x00800000 && p <= 0x03FFFFFF && (a > 0x80000000n && a < 0x90000000n)) {
+            console.warn(`CPU read from reserved space: 0x${a.toString(16)} (paddr 0x${p.toString(16)})`);
+        }
         if (p >= 0x10000000 && p <= 0x1FBFFFFF) return this.memory.readRom32(p - 0x10000000);
+        if (p >= 0x1FC00000 && p <= 0x1FC007BF) return 0; // PIF ROM returns 0 to satisfy anti-piracy
 
         // DMEM / IMEM
         if (p >= 0x04000000 && p <= 0x04000FFF) return this.spDmemView.getUint32(p - 0x04000000, false);
@@ -333,20 +337,18 @@ class MMU {
             const rd = new Uint8Array(this.memory.rdram);
             const rv = new Uint8Array(this.memory.rom);
             const rs = rv.length;
-            const isMirror = (ca & 0x01000000) || (ca & 0x08000000);
-            const actualLen = Math.min(len, 0x1000000); // Cap at 16MB for safety
-            const srcStart = ca % rs;
+            const actualLen = Math.min(len, 0x1000000);
+            const srcStart = (ca & 0x0FFFFFFF) % rs; // Support mirrors
 
-            if (!isMirror && (ra + actualLen) <= 0x800000 && (srcStart + actualLen) <= rs) {
+            if ((ra + actualLen) <= 0x800000 && (srcStart + actualLen) <= rs) {
                 rd.set(rv.subarray(srcStart, srcStart + actualLen), ra);
             } else {
                 for (let i = 0; i < actualLen; i++) {
-                    const dst = (ra + i) & 0x7FFFFF;
-                    rd[dst] = rv[(ca + i) % rs];
+                    rd[(ra + i) & 0x7FFFFF] = rv[(srcStart + i) % rs];
                 }
             }
         }
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + (Math.min(len, 0x100000) * 17);
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + Math.floor(len / 4);
     }
 
     doSiDma(toPif) {

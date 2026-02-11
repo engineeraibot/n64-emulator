@@ -34,17 +34,15 @@ class CPU {
 
         const runLoop = () => {
             if (!this.isRunning) return;
-            const startTime = performance.now();
             let count = 0;
-            const budget = 4000000; // Increase budget for better performance
+            const budget = 5000000;
+            const batch = 500000;
 
             while (count < budget) {
-                const batch = 100000;
                 for (let i = 0; i < batch; i++) {
                     this.step();
                 }
                 count += batch;
-                if (performance.now() - startTime >= 10) break; // Reduced threshold for better UI responsiveness
             }
             setTimeout(runLoop, 0);
         };
@@ -91,7 +89,7 @@ class CPU {
         this.gpr[18] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x10, false))); // s2 (checksum)
         this.gpr[11] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x14, false))); // t3 (checksum)
 
-        this.cp0Registers[12] = 0x34000000n; // Status
+        this.cp0Registers[12] = 0x30000000n; // Status: CU0=1, CU1=1, FR=0, BEV=0
 
         // PIF RAM seed
         this.mmu.pifRam[0x24] = 0x00;
@@ -113,6 +111,8 @@ class CPU {
         this.pcHistoryIdx = (this.pcHistoryIdx + 1) % 100;
 
         this.instructionCount++;
+        this.gpr[0] = 0n;
+
         if ((this.instructionCount % 5000000) === 0) {
             console.log(`CPU Status: PC=0x${this.pc.toString(16)} Instructions=${this.instructionCount}`);
         }
@@ -163,8 +163,6 @@ class CPU {
         } else {
             this.pc = BigInt.asIntN(32, nextPc);
         }
-
-        this.gpr[0] = 0n;
     }
 
     decodeAndExecute(instruction, currentPc, isDelaySlot) {
@@ -407,16 +405,53 @@ class CPU {
             this.branchTarget = pc + 4n + (imm << 2n);
             this.branchTaken = true;
             return pc + 4n;
+        } else if (likely) {
+            return pc + 8n;
+        } else {
+            this.branchTarget = pc + 8n;
+            this.branchTaken = true;
+            return pc + 4n;
         }
-        return likely ? pc + 8n : pc + 4n;
     }
 
     opJ(i, pc, ds) { this.branchTarget = BigInt.asIntN(32, (pc & 0xF0000000n) | (BigInt(i & 0x03FFFFFF) << 2n)); this.branchTaken = true; return pc + 4n; }
     opJAL(i, pc, ds) { this.gpr[31] = BigInt.asIntN(32, pc + 8n); return this.opJ(i, pc); }
-    opBEQ(i, pc, ds) { if (this.gpr[(i >> 21) & 0x1F] === this.gpr[(i >> 16) & 0x1F]) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; } return pc + 4n; }
-    opBNE(i, pc, ds) { if (this.gpr[(i >> 21) & 0x1F] !== this.gpr[(i >> 16) & 0x1F]) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; } return pc + 4n; }
-    opBLEZ(i, pc, ds) { if (this.gpr[(i >> 21) & 0x1F] <= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; } return pc + 4n; }
-    opBGTZ(i, pc, ds) { if (this.gpr[(i >> 21) & 0x1F] > 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; } return pc + 4n; }
+    opBEQ(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] === this.gpr[(i >> 16) & 0x1F]) {
+            this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n);
+        } else {
+            this.branchTarget = pc + 8n;
+        }
+        this.branchTaken = true;
+        return pc + 4n;
+    }
+    opBNE(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] !== this.gpr[(i >> 16) & 0x1F]) {
+            this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n);
+        } else {
+            this.branchTarget = pc + 8n;
+        }
+        this.branchTaken = true;
+        return pc + 4n;
+    }
+    opBLEZ(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] <= 0n) {
+            this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n);
+        } else {
+            this.branchTarget = pc + 8n;
+        }
+        this.branchTaken = true;
+        return pc + 4n;
+    }
+    opBGTZ(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] > 0n) {
+            this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n);
+        } else {
+            this.branchTarget = pc + 8n;
+        }
+        this.branchTaken = true;
+        return pc + 4n;
+    }
 
     opADDIU(i) { this.gpr[(i >> 16) & 0x1F] = BigInt.asIntN(32, this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF))); }
     opDADDIU(i) { this.gpr[(i >> 16) & 0x1F] = this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF)); }
@@ -571,8 +606,13 @@ class CPU {
                 this.branchTarget = pc + 4n + (imm << 2n);
                 this.branchTaken = true;
                 return pc + 4n;
+            } else if (t >= 2) { // Likely
+                return pc + 8n;
+            } else {
+                this.branchTarget = pc + 8n;
+                this.branchTaken = true;
+                return pc + 4n;
             }
-            return (t >= 2) ? pc + 8n : pc + 4n;
         }
 
         if (sub === 0x00) this.gpr[rt] = BigInt.asIntN(32, BigInt(this.fprView.getUint32(this.getFprAddr32(fs), false)));
@@ -677,9 +717,11 @@ class CPU {
     }
 
     raiseException(code, pc, ds) {
-        if (this.instructionCount % 1000 === 0 || code !== 0) {
+        if (code !== 0) {
             const instr = this.mmu.read32(Number(pc));
+            const history = Array.from(this.pcHistory).map(x => x.toString(16)).join(',');
             console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} t0=0x${this.gpr[8].toString(16)} t1=0x${this.gpr[9].toString(16)} v0=0x${this.gpr[2].toString(16)}`);
+            console.warn(`PC History: ${history}`);
         }
         const status = this.cp0Registers[12], bev = (status >> 22n) & 1n;
         const vector = bev ? 0xBFC00380n : 0x80000180n;
