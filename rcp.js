@@ -95,7 +95,7 @@ class RCP {
         switch (cmd) {
             case 0x24: case 0x25: // TEXRECT
                 this.handleG_TEXRECT(hi, lo, addr, cmd === 0x25);
-                consumed = 16;
+                consumed = 24;
                 break;
             case 0x2F: // SETOTHERMODE
                 this.rspState.otherModeLo = lo;
@@ -115,7 +115,7 @@ class RCP {
                 this.updateUseTexture(hi, lo);
                 break;
             case 0x3D:
-                this.rspState.textureImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF;
+                this.rspState.textureImage = this.resolvePhysicalAddress(lo);
                 this.rspState.textureImageWidth = (hi & 0xFFF) + 1;
                 this.rspState.textureImageSize = (hi >>> 19) & 0x3;
                 break;
@@ -160,9 +160,9 @@ class RCP {
             if (type === 4) { // MIO0 Decompression
                 let input = this.mmu.memory.rdram;
                 let offset = dataPtr & 0x7FFFFF;
-                if (dataPtr >= 0x10000000 && dataPtr <= 0x1FBFFFFF) {
+                if ((dataPtr >= 0x10000000 && dataPtr <= 0x1FBFFFFF) || (dataPtr >= 0x08000000 && dataPtr <= 0x0FFFFFFF)) {
                     input = this.mmu.memory.rom;
-                    offset = dataPtr - 0x10000000;
+                    offset = (dataPtr & 0x0FFFFFFF) % this.mmu.memory.rom.byteLength;
                 }
                 const out = this.mmu.cpu.decompressMIO0(input, offset);
                 if (out) {
@@ -171,7 +171,11 @@ class RCP {
                     if (len > 0) dest.set(out.subarray(0, len), yieldDataPtr);
                 }
             } else if (type === 1) { // Graphics
-                this.processDisplayList((dataPtr & 0x7FFFFF) | 0x80000000);
+                let startAddr = (dataPtr & 0x7FFFFF) | 0x80000000;
+                if ((dataPtr >= 0x10000000 && dataPtr <= 0x1FBFFFFF) || (dataPtr >= 0x08000000 && dataPtr <= 0x0FFFFFFF)) {
+                    startAddr = (dataPtr & 0x1FFFFFFF) | 0x80000000;
+                }
+                this.processDisplayList(startAddr);
             }
         } catch (e) {
             console.error("RSP Task Error:", e);
@@ -180,12 +184,14 @@ class RCP {
 
     processDisplayList(addr) {
         if (!this.rspState) this.initRspState();
-        const rdramView = new DataView(this.mmu.memory.rdram);
         let pc = addr, depth = 0, stack = [];
+        console.log(`RSP: Starting Display List at 0x${addr.toString(16)}`);
 
-        while (pc >= 0x80000000 && pc < 0x80800000) {
-            const hi = rdramView.getUint32(pc & 0x7FFFFF, false);
-            const lo = rdramView.getUint32((pc + 4) & 0x7FFFFF, false);
+        let cmdCount = 0;
+        while (pc !== 0 && cmdCount < 50000) {
+            cmdCount++;
+            const hi = this.mmu.read32(Number(pc));
+            const lo = this.mmu.read32(Number(pc + 4));
             pc += 8;
             this.rdpCommandCount++;
             const cmd = (hi >>> 24) & 0xFF;
@@ -210,7 +216,7 @@ class RCP {
                 case 0xBD: case 0xB7: this.handleG_MOVEMEM(hi, lo); break;
                 case 0xDB: this.rspState.segments[(hi >> 2) & 0xF] = lo & 0x00FFFFFF; break;
                 case 0xFD:
-                    this.rspState.textureImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF;
+                    this.rspState.textureImage = this.resolvePhysicalAddress(lo);
                     this.rspState.textureImageWidth = (hi & 0xFFF) + 1;
                     this.rspState.textureImageSize = (hi >>> 19) & 0x3;
                     break;
@@ -231,6 +237,14 @@ class RCP {
                     break;
                 case 0xF6: this.handleG_FILLRECT(hi, lo); break;
                 case 0xF7: this.rspState.fillColor = lo; break;
+                case 0xE4: // G_TEXRECT
+                    this.handleG_TEXRECT(hi, lo, pc - 8, false);
+                    pc += 16;
+                    break;
+                case 0xE5: // G_TEXRECTFLIP
+                    this.handleG_TEXRECT(hi, lo, pc - 8, true);
+                    pc += 16;
+                    break;
                 case 0xE2: case 0xB9: this.rspState.otherModeLo = lo; break;
                 case 0xE3: case 0xBA: this.rspState.otherModeHi = lo; break;
                 case 0xBB:
@@ -270,39 +284,52 @@ class RCP {
     }
 
     readMatrix(addr) {
-        const rd = new DataView(this.mmu.memory.rdram), m = new Array(16);
+        const m = new Array(16);
         for (let i = 0; i < 16; i++) {
-            m[i] = rd.getInt16(addr + i * 2, false) + rd.getUint16(addr + 32 + i * 2, false) / 65536.0;
+            const hi = this.mmu.read16(addr + i * 2);
+            const lo = this.mmu.read16(addr + 32 + i * 2);
+            const hiSigned = (hi << 16) >> 16;
+            m[i] = hiSigned + lo / 65536.0;
         }
         return m;
     }
 
     resolveAddress(addr) {
         const seg = (addr >>> 24) & 0xF;
-        return (this.rspState.segments[seg] & 0x00FFFFFF) + (addr & 0x00FFFFFF) + 0x80000000;
+        const base = this.rspState.segments[seg];
+        // If segment base looks like a virtual or physical address with mirroring, preserve it
+        if ((base & 0xF8000000) !== 0) {
+            return (base + (addr & 0x00FFFFFF)) | 0x80000000;
+        }
+        return ((base & 0x00FFFFFF) + (addr & 0x00FFFFFF)) | 0x80000000;
     }
 
     resolvePhysicalAddress(addr) {
         const seg = (addr >>> 24) & 0xF;
-        return (this.rspState.segments[seg] & 0x00FFFFFF) + (addr & 0x00FFFFFF);
+        const base = this.rspState.segments[seg];
+        if ((base & 0x10000000) || (base & 0x08000000)) {
+            return (base + (addr & 0x00FFFFFF)) & 0x1FFFFFFF;
+        }
+        return (base & 0x00FFFFFF) + (addr & 0x00FFFFFF);
     }
 
     handleG_VTX(hi, lo) {
         const num = (hi >>> 16) & 0xFF;
         const dest = ((hi >>> 8) & 0xFF) >> 4;
         const addr = this.resolveAddress(lo);
-        const rd = new DataView(this.mmu.memory.rdram);
         const mv = this.rspState.modelviewStack[this.rspState.modelviewStack.length - 1];
         const p = this.rspState.projectionMatrix;
-        const mvp = this.multiplyMatrices(p, mv);
+        const mvp = this.multiplyMatrices(mv, p);
 
         for (let i = 0; i < num; i++) {
-            const v = (addr + i * 16) & 0x7FFFFF;
-            const x = rd.getInt16(v, false), y = rd.getInt16(v + 2, false), z = rd.getInt16(v + 4, false);
-            const tx = x * mvp[0] + y * mvp[1] + z * mvp[2] + mvp[3];
-            const ty = x * mvp[4] + y * mvp[5] + z * mvp[6] + mvp[7];
-            const tz = x * mvp[8] + y * mvp[9] + z * mvp[10] + mvp[11];
-            const tw = x * mvp[12] + y * mvp[13] + z * mvp[14] + mvp[15];
+            const v = addr + i * 16;
+            const x = (this.mmu.read16(v) << 16) >> 16;
+            const y = (this.mmu.read16(v + 2) << 16) >> 16;
+            const z = (this.mmu.read16(v + 4) << 16) >> 16;
+            const tx = x * mvp[0] + y * mvp[4] + z * mvp[8] + mvp[12];
+            const ty = x * mvp[1] + y * mvp[5] + z * mvp[9] + mvp[13];
+            const tz = x * mvp[2] + y * mvp[6] + z * mvp[10] + mvp[14];
+            const tw = x * mvp[3] + y * mvp[7] + z * mvp[11] + mvp[15];
 
             let sx = 160, sy = 120, sz = tz;
             if (Math.abs(tw) > 0.0001) {
@@ -318,8 +345,8 @@ class RCP {
             }
             this.rspState.vertices[dest + i] = {
                 x: sx, y: sy, z: sz,
-                r: rd.getUint8(v + 12), g: rd.getUint8(v + 13), b: rd.getUint8(v + 14), a: rd.getUint8(v + 15),
-                s: rd.getInt16(v + 8, false), t: rd.getInt16(v + 10, false)
+                r: this.mmu.read8(v + 12), g: this.mmu.read8(v + 13), b: this.mmu.read8(v + 14), a: this.mmu.read8(v + 15),
+                s: (this.mmu.read16(v + 8) << 16) >> 16, t: (this.mmu.read16(v + 10) << 16) >> 16
             };
         }
     }
@@ -347,18 +374,17 @@ class RCP {
 
     handleG_MOVEMEM(hi, lo) {
         const idx = (hi >>> 16) & 0xFF;
-        const addr = this.resolveAddress(lo) & 0x7FFFFF;
-        const rd = new DataView(this.mmu.memory.rdram);
+        const addr = this.resolveAddress(lo);
         if (idx === 0x01 || idx === 0x80) {
             this.rspState.viewport = {
-                scale: [rd.getInt16(addr, false) / 4.0, rd.getInt16(addr + 2, false) / 4.0, rd.getInt16(addr + 4, false) / 512.0],
-                trans: [rd.getInt16(addr + 8, false) / 4.0, rd.getInt16(addr + 10, false) / 4.0, rd.getInt16(addr + 12, false) / 512.0]
+                scale: [((this.mmu.read16(addr) << 16) >> 16) / 4.0, ((this.mmu.read16(addr + 2) << 16) >> 16) / 4.0, ((this.mmu.read16(addr + 4) << 16) >> 16) / 512.0],
+                trans: [((this.mmu.read16(addr + 8) << 16) >> 16) / 4.0, ((this.mmu.read16(addr + 10) << 16) >> 16) / 4.0, ((this.mmu.read16(addr + 12) << 16) >> 16) / 512.0]
             };
         }
     }
 
     handleG_MTX(hi, lo) {
-        const f = (hi >>> 16) & 0xFF, m = this.readMatrix(this.resolveAddress(lo) & 0x7FFFFF);
+        const f = hi & 0xFF, m = this.readMatrix(this.resolveAddress(lo));
         if (f & 0x01) {
             if (f & 0x02) this.rspState.projectionMatrix = m;
             else this.rspState.projectionMatrix = this.multiplyMatrices(m, this.rspState.projectionMatrix);
@@ -377,11 +403,18 @@ class RCP {
         const rd = new DataView(this.mmu.memory.rdram);
         const sz = this.rspState.colorImageSize;
         const w = this.rspState.colorImageWidth;
+
+        const bpp = (sz === 3) ? 4 : (sz === 2 ? 2 : 1);
+        const fillVal = (sz === 2) ? (this.rspState.fillColor >>> 16) & 0xFFFF : this.rspState.fillColor;
+
         for (let y = Math.floor(y1 / 4); y < Math.floor(y2 / 4); y++) {
+            if (y < 0 || y >= 240) continue;
             for (let x = Math.floor(x1 / 4); x < Math.floor(x2 / 4); x++) {
-                const p = (addr + (y * w + x) * (sz === 3 ? 4 : 2)) & 0x7FFFFF;
-                if (sz === 2) rd.setUint16(p, (this.rspState.fillColor >>> 16) & 0xFFFF, false);
-                else rd.setUint32(p, this.rspState.fillColor, false);
+                if (x < 0 || x >= w) continue;
+                const p = (addr + (y * w + x) * bpp) & 0x7FFFFF;
+                if (sz === 3) rd.setUint32(p, fillVal, false);
+                else if (sz === 2) rd.setUint16(p, fillVal, false);
+                else rd.setUint8(p, fillVal & 0xFF);
             }
         }
     }
@@ -536,10 +569,9 @@ class RCP {
     handleG_LOADBLOCK(hi, lo) {
         const t = (lo >> 24) & 0x7;
         const size = (((lo >> 12) & 0xFFF) + 1) * 8;
-        const rd = new Uint8Array(this.mmu.memory.rdram);
         const off = this.rspState.tiles[t].tmem * 8;
         for (let i = 0; i < size && (off + i < 4096); i++) {
-            this.tmem[off + i] = rd[(this.rspState.textureImage + i) & 0x7FFFFF];
+            this.tmem[off + i] = this.mmu.read8(this.rspState.textureImage + i);
         }
     }
 
@@ -549,7 +581,6 @@ class RCP {
         const lrs = (lo >>> 12) & 0xFFF, lrt = lo & 0xFFF;
         const tile = this.rspState.tiles[t];
         const off = tile.tmem * 8;
-        const rd = new Uint8Array(this.mmu.memory.rdram);
         const bpp = (this.rspState.textureImageSize === 3) ? 4 : (this.rspState.textureImageSize === 2 ? 2 : 1);
         const imgWidth = this.rspState.textureImageWidth;
 
@@ -558,7 +589,7 @@ class RCP {
             let s = this.rspState.textureImage + (y * imgWidth + Math.floor(uls / 4)) * bpp;
             for (let x = Math.floor(uls / 4); x <= Math.floor(lrs / 4) && (d < 4096); x++) {
                 for (let b = 0; b < bpp && (d < 4096); b++) {
-                    this.tmem[d++] = rd[(s++) & 0x7FFFFF];
+                    this.tmem[d++] = this.mmu.read8(s++);
                 }
             }
         }
@@ -571,16 +602,15 @@ class RCP {
     }
 
     handleG_TEXRECT(hi, lo, addr, flip) {
-        const rd = new DataView(this.mmu.memory.rdram);
         const xh = (hi >> 12) & 0xFFF, yh = hi & 0xFFF, xl = (lo >> 12) & 0xFFF, yl = lo & 0xFFF, t = (lo >> 24) & 0x7;
-        const s = rd.getUint16((addr + 8) & 0x7FFFFF, false);
-        const tt = rd.getUint16((addr + 10) & 0x7FFFFF, false);
-        const dx = rd.getInt16((addr + 12) & 0x7FFFFF, false);
-        const dy = rd.getInt16((addr + 14) & 0x7FFFFF, false);
+        const s = this.mmu.read16(addr + 8);
+        const tt = this.mmu.read16(addr + 10);
+        const dx = (this.mmu.read16(addr + 12) << 16) >> 16;
+        const dy = (this.mmu.read16(addr + 14) << 16) >> 16;
         const v1 = { x: xl / 4, y: yl / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: tt };
-        const v2 = { x: xh / 4, y: yl / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh - xl) * dx / 4, t: tt };
-        const v3 = { x: xl / 4, y: yh / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: tt + (yh - yl) * dy / 4 };
-        const v4 = { x: xh / 4, y: yh / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh - xl) * dx / 4, t: tt + (yh - yl) * dy / 4 };
+        const v2 = { x: xh / 4, y: yl / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh - xl) * dx / 4096, t: tt };
+        const v3 = { x: xl / 4, y: yh / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: tt + (yh - yl) * dy / 4096 };
+        const v4 = { x: xh / 4, y: yh / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh - xl) * dx / 4096, t: tt + (yh - yl) * dy / 4096 };
         this.rspState.currentTile = t;
         this.drawTriangle(v1, v2, v3);
         this.drawTriangle(v2, v3, v4);

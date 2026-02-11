@@ -3,7 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const scene = new THREE.Scene(), camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1), renderer = new THREE.WebGLRenderer({ canvas: canvas });
     const FB_WIDTH = 320, FB_HEIGHT = 240, framebuffer = new Uint8Array(FB_WIDTH * FB_HEIGHT * 4);
     const ram = new Memory(8 * 1024 * 1024), mmu = new MMU(ram), rcp = new RCP(mmu, framebuffer), cpu = new CPU(mmu, rcp);
-    mmu.cpu = cpu; mmu.rcp = rcp; window.mmu = mmu;
+    mmu.cpu = cpu; mmu.rcp = rcp; window.mmu = mmu; window.cpu = cpu; window.rcp = rcp;
 
     romFileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
@@ -15,8 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const texture = new THREE.DataTexture(framebuffer, FB_WIDTH, FB_HEIGHT, THREE.RGBAFormat);
-    texture.flipY = true; texture.needsUpdate = true;
+    texture.flipY = false; texture.needsUpdate = true;
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: texture })));
+
+    let lastOrigin = -1, lastWidth = -1, lastType = -1;
 
     function resize() {
         const w = window.innerWidth, h = window.innerHeight - (document.querySelector('.controls')?.offsetHeight || 0);
@@ -30,21 +32,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function update() {
         const origin = mmu.viRegisters[1] & 0x7FFFFF, width = mmu.viRegisters[2] & 0xFFF, type = mmu.viRegisters[0] & 0x3;
+
+        if (origin !== lastOrigin || width !== lastWidth || type !== lastType) {
+            console.log(`VI Change: origin=0x${origin.toString(16)} width=${width} type=${type}`);
+            lastOrigin = origin; lastWidth = width; lastType = type;
+        }
+
         if (width > 0 && type >= 2) {
             const rd = new DataView(ram.rdram), bpp = (type === 3) ? 4 : 2;
             let fbIdx = 0;
-            for (let y = 0; y < FB_HEIGHT; y++) {
-                const off = origin + y * width * bpp;
+            const drawWidth = Math.min(width, FB_WIDTH);
+            const drawHeight = FB_HEIGHT;
+
+            for (let y = 0; y < drawHeight; y++) {
+                const lineOff = origin + y * width * bpp;
                 for (let x = 0; x < FB_WIDTH; x++) {
-                    const a = off + x * bpp;
-                    if (a + bpp <= 8*1024*1024) {
+                    if (x < drawWidth) {
+                        const a = (lineOff + x * bpp) & 0x7FFFFF;
                         if (type === 2) {
                             const v = rd.getUint16(a, false);
-                            framebuffer[fbIdx++] = ((v >> 11) & 0x1F) << 3; framebuffer[fbIdx++] = ((v >> 6) & 0x1F) << 3; framebuffer[fbIdx++] = ((v >> 1) & 0x1F) << 3; framebuffer[fbIdx++] = 255;
+                            framebuffer[fbIdx++] = ((v >> 11) & 0x1F) << 3;
+                            framebuffer[fbIdx++] = ((v >> 6) & 0x1F) << 3;
+                            framebuffer[fbIdx++] = ((v >> 1) & 0x1F) << 3;
+                            framebuffer[fbIdx++] = 255;
                         } else {
-                            framebuffer[fbIdx++] = rd.getUint8(a); framebuffer[fbIdx++] = rd.getUint8(a+1); framebuffer[fbIdx++] = rd.getUint8(a+2); framebuffer[fbIdx++] = 255;
+                            framebuffer[fbIdx++] = rd.getUint8(a);
+                            framebuffer[fbIdx++] = rd.getUint8(a + 1);
+                            framebuffer[fbIdx++] = rd.getUint8(a + 2);
+                            framebuffer[fbIdx++] = 255;
                         }
-                    } else { fbIdx += 4; }
+                    } else {
+                        framebuffer[fbIdx++] = 0; framebuffer[fbIdx++] = 0; framebuffer[fbIdx++] = 0; framebuffer[fbIdx++] = 255;
+                    }
                 }
             }
             texture.needsUpdate = true;
