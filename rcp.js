@@ -114,10 +114,14 @@ class RCP {
                 this.rspState.combine.lo = lo;
                 this.updateUseTexture(hi, lo);
                 break;
-            case 0x3D: this.rspState.textureImage = lo & 0x7FFFFF; break;
-            case 0x3E: this.rspState.depthImage = lo & 0x7FFFFF; break;
+            case 0x3D:
+                this.rspState.textureImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF;
+                this.rspState.textureImageWidth = (hi & 0xFFF) + 1;
+                this.rspState.textureImageSize = (hi >>> 19) & 0x3;
+                break;
+            case 0x3E: this.rspState.depthImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF; break;
             case 0x3F:
-                this.rspState.colorImage = lo & 0x7FFFFF;
+                this.rspState.colorImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF;
                 this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
                 this.rspState.colorImageSize = (hi >>> 19) & 0x3;
                 break;
@@ -138,6 +142,7 @@ class RCP {
             tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0, uls: 0, ult: 0, lrs: 0, lrt: 0 })),
             combine: { hi: 0, lo: 0 },
             primColor: 0xFFFFFFFF, envColor: 0, fillColor: 0, colorImage: 0, colorImageWidth: 320, colorImageSize: 2,
+            textureImage: 0, textureImageWidth: 0, textureImageSize: 2,
             textureScaleS: 1.0, textureScaleT: 1.0, otherModeHi: 0, otherModeLo: 0, currentTile: 0, useTexture: false,
             geometryMode: 0
         };
@@ -146,19 +151,27 @@ class RCP {
     runRspTask() {
         const taskPtr = 0xFC0;
         const type = this.mmu.spDmemView.getUint32(taskPtr + 0x00, false);
-        const dataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x30, false) & 0x7FFFFF;
+        const dataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x30, false);
         const yieldDataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x38, false) & 0x7FFFFF;
 
         console.log(`RSP Task: type=${type} dataPtr=0x${dataPtr.toString(16)}`);
 
         try {
             if (type === 4) { // MIO0 Decompression
-                const out = this.mmu.cpu.decompressMIO0(this.mmu.memory.rdram, dataPtr);
+                let input = this.mmu.memory.rdram;
+                let offset = dataPtr & 0x7FFFFF;
+                if (dataPtr >= 0x10000000 && dataPtr <= 0x1FBFFFFF) {
+                    input = this.mmu.memory.rom;
+                    offset = dataPtr - 0x10000000;
+                }
+                const out = this.mmu.cpu.decompressMIO0(input, offset);
                 if (out) {
-                    new Uint8Array(this.mmu.memory.rdram).set(out, yieldDataPtr);
+                    const dest = new Uint8Array(this.mmu.memory.rdram);
+                    const len = Math.min(out.length, 0x800000 - yieldDataPtr);
+                    if (len > 0) dest.set(out.subarray(0, len), yieldDataPtr);
                 }
             } else if (type === 1) { // Graphics
-                this.processDisplayList(dataPtr | 0x80000000);
+                this.processDisplayList((dataPtr & 0x7FFFFF) | 0x80000000);
             }
         } catch (e) {
             console.error("RSP Task Error:", e);
@@ -196,7 +209,11 @@ class RCP {
                 case 0xBC: case 0xB6: this.handleG_MOVEWORD(hi, lo); break;
                 case 0xBD: case 0xB7: this.handleG_MOVEMEM(hi, lo); break;
                 case 0xDB: this.rspState.segments[(hi >> 2) & 0xF] = lo & 0x00FFFFFF; break;
-                case 0xFD: this.rspState.textureImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF; break;
+                case 0xFD:
+                    this.rspState.textureImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF;
+                    this.rspState.textureImageWidth = (hi & 0xFFF) + 1;
+                    this.rspState.textureImageSize = (hi >>> 19) & 0x3;
+                    break;
                 case 0xFF:
                     this.rspState.colorImage = this.resolvePhysicalAddress(lo) & 0x7FFFFF;
                     this.rspState.colorImageWidth = (hi & 0xFFF) + 1;
@@ -427,11 +444,30 @@ class RCP {
         const wrapS = (this.rspState.otherModeHi >> 14) & 0xF ? (1 << ((this.rspState.otherModeHi >> 14) & 0xF)) : 1024;
         const wrapT = (this.rspState.otherModeHi >> 4) & 0xF ? (1 << ((this.rspState.otherModeHi >> 4) & 0xF)) : 1024;
         ts = Math.abs(ts) % wrapS; tt = Math.abs(tt) % wrapT;
-        const p = (tile.tmem * 8 + tt * tile.line * 8 + ts * (tile.size === 2 ? 2 : 1));
-        if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+
         if (tile.format === 0 && tile.size === 2) { // RGBA 16-bit
+            const p = (tile.tmem * 8 + tt * tile.line * 8 + ts * 2);
+            if (p + 1 >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
             const v = (this.tmem[p] << 8) | this.tmem[p + 1];
             return { r: ((v >> 11) & 0x1F) << 3, g: ((v >> 6) & 0x1F) << 3, b: ((v >> 1) & 0x1F) << 3, a: (v & 1) ? 255 : 0 };
+        } else if (tile.format === 2) { // CI
+            const p = (tile.tmem * 8 + tt * tile.line * 8 + (tile.size === 1 ? ts : ts >> 1));
+            if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+            const idx = (tile.size === 1) ? this.tmem[p] : (ts & 1 ? this.tmem[p] & 0xF : this.tmem[p] >> 4);
+            const palOff = 2048 + (tile.palette * 16 + idx) * 2;
+            const v = (this.tmem[palOff] << 8) | this.tmem[palOff + 1];
+            return { r: ((v >> 11) & 0x1F) << 3, g: ((v >> 6) & 0x1F) << 3, b: ((v >> 1) & 0x1F) << 3, a: (v & 1) ? 255 : 0 };
+        } else if (tile.format === 3 && tile.size === 1) { // IA 8-bit
+            const p = (tile.tmem * 8 + tt * tile.line * 8 + ts);
+            if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+            const v = this.tmem[p];
+            const i = (v >> 4) << 4;
+            return { r: i, g: i, b: i, a: (v & 0xF) << 4 };
+        } else if (tile.format === 4) { // I
+            const p = (tile.tmem * 8 + tt * tile.line * 8 + (tile.size === 1 ? ts : ts >> 1));
+            if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+            const v = (tile.size === 1) ? this.tmem[p] : (ts & 1 ? (this.tmem[p] & 0xF) << 4 : this.tmem[p] & 0xF0);
+            return { r: v, g: v, b: v, a: 255 };
         }
         return { r: 255, g: 255, b: 255, a: 255 };
     }
@@ -439,14 +475,26 @@ class RCP {
     combineColor(shade, tex) {
         const hi = this.rspState.combine.hi, lo = this.rspState.combine.lo;
         const get = (src, alpha) => {
-            switch (src) {
-                case 0: return alpha ? tex.a : { r: tex.r, g: tex.g, b: tex.b };
-                case 4: return alpha ? shade.a : { r: shade.r, g: shade.g, b: shade.b };
-                case 3: const p = this.rspState.primColor; return alpha ? (p & 0xFF) : { r: (p >> 24) & 0xFF, g: (p >> 16) & 0xFF, b: (p >> 8) & 0xFF };
-                case 5: const e = this.rspState.envColor; return alpha ? (e & 0xFF) : { r: (e >> 24) & 0xFF, g: (e >> 16) & 0xFF, b: (e >> 8) & 0xFF };
-                case 6: return alpha ? 255 : { r: 255, g: 255, b: 255 };
-                case 7: return alpha ? 0 : { r: 0, g: 0, b: 0 };
-                default: return alpha ? 0 : { r: 0, g: 0, b: 0 };
+            if (alpha) {
+                switch (src) {
+                    case 0: return tex.a;
+                    case 3: return shade.a;
+                    case 4: return (this.rspState.envColor & 0xFF);
+                    case 5: return (this.rspState.primColor & 0xFF);
+                    case 6: return 255;
+                    case 7: return 0;
+                    default: return 0;
+                }
+            } else {
+                switch (src) {
+                    case 0: return { r: tex.r, g: tex.g, b: tex.b };
+                    case 3: return { r: shade.r, g: shade.g, b: shade.b };
+                    case 4: const e = this.rspState.envColor; return { r: (e >> 24) & 0xFF, g: (e >> 16) & 0xFF, b: (e >> 8) & 0xFF };
+                    case 5: const p = this.rspState.primColor; return { r: (p >> 24) & 0xFF, g: (p >> 16) & 0xFF, b: (p >> 8) & 0xFF };
+                    case 6: return { r: 255, g: 255, b: 255 };
+                    case 7: return { r: 0, g: 0, b: 0 };
+                    default: return { r: 0, g: 0, b: 0 };
+                }
             }
         };
         const A = get((hi >> 20) & 0xF, false), B = get((hi >> 15) & 0x1F, false), C = get((hi >> 10) & 0x1F, false), D = get((hi >> 6) & 0x7, false);
@@ -487,7 +535,7 @@ class RCP {
 
     handleG_LOADBLOCK(hi, lo) {
         const t = (lo >> 24) & 0x7;
-        const size = ((lo >> 12) & 0xFFF + 1) * 8;
+        const size = (((lo >> 12) & 0xFFF) + 1) * 8;
         const rd = new Uint8Array(this.mmu.memory.rdram);
         const off = this.rspState.tiles[t].tmem * 8;
         for (let i = 0; i < size && (off + i < 4096); i++) {
@@ -497,16 +545,21 @@ class RCP {
 
     handleG_LOADTILE(hi, lo) {
         const t = (lo >> 24) & 0x7;
-        const ult = hi & 0xFFF;
-        const lrt = lo & 0xFFF;
-        const off = this.rspState.tiles[t].tmem * 8;
-        const line = this.rspState.tiles[t].line * 8;
+        const uls = (hi >>> 12) & 0xFFF, ult = hi & 0xFFF;
+        const lrs = (lo >>> 12) & 0xFFF, lrt = lo & 0xFFF;
+        const tile = this.rspState.tiles[t];
+        const off = tile.tmem * 8;
         const rd = new Uint8Array(this.mmu.memory.rdram);
-        let s = this.rspState.textureImage;
+        const bpp = (this.rspState.textureImageSize === 3) ? 4 : (this.rspState.textureImageSize === 2 ? 2 : 1);
+        const imgWidth = this.rspState.textureImageWidth;
+
         let d = off;
-        for (let y = ult / 4; y < lrt / 4; y++) {
-            for (let x = 0; x < line && d < 4096; x++) {
-                this.tmem[d++] = rd[s++ & 0x7FFFFF];
+        for (let y = Math.floor(ult / 4); y <= Math.floor(lrt / 4); y++) {
+            let s = this.rspState.textureImage + (y * imgWidth + Math.floor(uls / 4)) * bpp;
+            for (let x = Math.floor(uls / 4); x <= Math.floor(lrs / 4) && (d < 4096); x++) {
+                for (let b = 0; b < bpp && (d < 4096); b++) {
+                    this.tmem[d++] = rd[(s++) & 0x7FFFFF];
+                }
             }
         }
     }

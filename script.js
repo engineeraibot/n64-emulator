@@ -29,7 +29,6 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('resize', resize); resize();
 
     function update() {
-        if (rcp.rdpCommandCount > 0) console.log(`RDP Commands: ${rcp.rdpCommandCount}`);
         const origin = mmu.viRegisters[1] & 0x7FFFFF, width = mmu.viRegisters[2] & 0xFFF, type = mmu.viRegisters[0] & 0x3;
         if (width > 0 && type >= 2) {
             const rd = new DataView(ram.rdram), bpp = (type === 3) ? 4 : 2;
