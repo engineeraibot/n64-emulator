@@ -2,10 +2,161 @@ class CPU {
     constructor(mmu, rcp) {
         this.mmu = mmu;
         this.rcp = rcp;
+        this.initOpTables();
         this.reset();
     }
 
+    invalidateCache() {
+        this.fetchPage = -1;
+        this.fetchView = null;
+    }
+
+    initOpTables() {
+        this.opTable = new Array(64).fill(this.opInvalid.bind(this));
+        this.specialTable = new Array(64).fill(this.opInvalid.bind(this));
+        this.regimmTable = new Array(32).fill(this.opInvalid.bind(this));
+
+        // REGIMM Table
+        this.regimmTable[0x00] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x01] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x02] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x03] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x10] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x11] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x12] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x13] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x08] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x09] = (i, pc, ds) => { if (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) >= BigInt.asUintN(64, BigInt.asIntN(16, BigInt(i & 0xFFFF)))) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0A] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0B] = (i, pc, ds) => { if (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) < BigInt.asUintN(64, BigInt.asIntN(16, BigInt(i & 0xFFFF)))) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0C] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] === BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0E] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] !== BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
+
+        // Primary Opcodes
+        this.opTable[0x00] = this.opSPECIAL.bind(this);
+        this.opTable[0x01] = this.opREGIMM.bind(this);
+        this.opTable[0x02] = this.opJ.bind(this);
+        this.opTable[0x03] = this.opJAL.bind(this);
+        this.opTable[0x04] = this.opBEQ.bind(this);
+        this.opTable[0x05] = this.opBNE.bind(this);
+        this.opTable[0x06] = this.opBLEZ.bind(this);
+        this.opTable[0x07] = this.opBGTZ.bind(this);
+        this.opTable[0x08] = this.opADDIU.bind(this);
+        this.opTable[0x09] = this.opADDIU.bind(this);
+        this.opTable[0x0A] = this.opSLTI.bind(this);
+        this.opTable[0x0B] = this.opSLTIU.bind(this);
+        this.opTable[0x0C] = this.opANDI.bind(this);
+        this.opTable[0x0D] = this.opORI.bind(this);
+        this.opTable[0x0E] = this.opXORI.bind(this);
+        this.opTable[0x0F] = this.opLUI.bind(this);
+        this.opTable[0x10] = this.opCOP0.bind(this);
+        this.opTable[0x11] = this.opCOP1.bind(this);
+        this.opTable[0x12] = (i, pc) => pc + 4n; // COP2 NOP
+        this.opTable[0x13] = (i, pc) => pc + 4n; // COP3 NOP
+        this.opTable[0x14] = this.opBEQL.bind(this);
+        this.opTable[0x15] = this.opBNEL.bind(this);
+        this.opTable[0x16] = this.opBLEZL.bind(this);
+        this.opTable[0x17] = this.opBGTZL.bind(this);
+        this.opTable[0x18] = this.opDADDIU.bind(this);
+        this.opTable[0x19] = this.opDADDIU.bind(this);
+        this.opTable[0x1A] = this.opLDL.bind(this);
+        this.opTable[0x1B] = this.opLDR.bind(this);
+        this.opTable[0x1C] = this.opSPECIAL2.bind(this);
+        this.opTable[0x20] = this.opLB.bind(this);
+        this.opTable[0x21] = this.opLH.bind(this);
+        this.opTable[0x22] = this.opLWL.bind(this);
+        this.opTable[0x23] = this.opLW.bind(this);
+        this.opTable[0x24] = this.opLBU.bind(this);
+        this.opTable[0x25] = this.opLHU.bind(this);
+        this.opTable[0x26] = this.opLWR.bind(this);
+        this.opTable[0x27] = this.opLWU.bind(this);
+        this.opTable[0x28] = this.opSB.bind(this);
+        this.opTable[0x29] = this.opSH.bind(this);
+        this.opTable[0x2A] = this.opSWL.bind(this);
+        this.opTable[0x2B] = this.opSW.bind(this);
+        this.opTable[0x2C] = this.opSDL.bind(this);
+        this.opTable[0x2D] = this.opSWR.bind(this);
+        this.opTable[0x2E] = this.opSDR.bind(this);
+        this.opTable[0x2F] = (i, pc) => pc + 4n; // CACHE
+        this.opTable[0x30] = this.opLL.bind(this);
+        this.opTable[0x31] = this.opLWC1.bind(this);
+        this.opTable[0x32] = (i, pc) => pc + 4n; // LWC2 NOP
+        this.opTable[0x34] = this.opLLD.bind(this);
+        this.opTable[0x35] = this.opLDC1.bind(this);
+        this.opTable[0x36] = (i, pc) => pc + 4n; // LDC2 NOP
+        this.opTable[0x37] = this.opLD.bind(this);
+        this.opTable[0x38] = this.opSC.bind(this);
+        this.opTable[0x39] = this.opSWC1.bind(this);
+        this.opTable[0x3A] = (i, pc) => pc + 4n; // SWC2 NOP
+        this.opTable[0x3C] = this.opSCD.bind(this);
+        this.opTable[0x3D] = this.opSDC1.bind(this);
+        this.opTable[0x3E] = (i, pc) => pc + 4n; // SDC2 NOP
+        this.opTable[0x3F] = this.opSD.bind(this);
+
+        // SPECIAL Table (func)
+        this.specialTable[0x00] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, (this.gpr[(i >> 16) & 0x1F] & 0xFFFFFFFFn) << BigInt((i >> 6) & 0x1F)); };
+        this.specialTable[0x01] = (i) => { if (((i >> 16) & 1) === (((this.fcr31 & 0x00800000) ? 1 : 0))) this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F]; };
+        this.specialTable[0x02] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, BigInt.asUintN(32, this.gpr[(i >> 16) & 0x1F]) >> BigInt((i >> 6) & 0x1F)); };
+        this.specialTable[0x03] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, BigInt.asIntN(32, this.gpr[(i >> 16) & 0x1F]) >> BigInt((i >> 6) & 0x1F)); };
+        this.specialTable[0x04] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, (this.gpr[(i >> 16) & 0x1F] & 0xFFFFFFFFn) << (this.gpr[(i >> 21) & 0x1F] & 0x1Fn)); };
+        this.specialTable[0x06] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, BigInt.asUintN(32, this.gpr[(i >> 16) & 0x1F]) >> (this.gpr[(i >> 21) & 0x1F] & 0x1Fn)); };
+        this.specialTable[0x07] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, BigInt.asIntN(32, this.gpr[(i >> 16) & 0x1F]) >> (this.gpr[(i >> 21) & 0x1F] & 0x1Fn)); };
+        this.specialTable[0x08] = (i) => { this.branchTarget = this.gpr[(i >> 21) & 0x1F]; this.branchTaken = true; };
+        this.specialTable[0x09] = (i, pc) => { this.branchTarget = this.gpr[(i >> 21) & 0x1F]; this.gpr[(i >> 11) & 0x1F] = pc + 8n; this.branchTaken = true; };
+        this.specialTable[0x0A] = (i) => { if (this.gpr[(i >> 16) & 0x1F] === 0n) this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F]; };
+        this.specialTable[0x0B] = (i) => { if (this.gpr[(i >> 16) & 0x1F] !== 0n) this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F]; };
+        this.specialTable[0x0C] = (i, pc, ds) => this.raiseException(8, pc, ds);
+        this.specialTable[0x0D] = (i, pc, ds) => this.raiseException(9, pc, ds);
+        this.specialTable[0x0E] = () => {};
+        this.specialTable[0x0F] = () => {};
+        this.specialTable[0x10] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.hi; };
+        this.specialTable[0x11] = (i) => { this.hi = this.gpr[(i >> 21) & 0x1F]; };
+        this.specialTable[0x12] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.lo; };
+        this.specialTable[0x13] = (i) => { this.lo = this.gpr[(i >> 21) & 0x1F]; };
+        this.specialTable[0x14] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, this.gpr[(i >> 16) & 0x1F] << (this.gpr[(i >> 21) & 0x1F] & 0x3Fn)); };
+        this.specialTable[0x16] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F]) >> (this.gpr[(i >> 21) & 0x1F] & 0x3Fn)); };
+        this.specialTable[0x17] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[(i >> 16) & 0x1F]) >> (this.gpr[(i >> 21) & 0x1F] & 0x3Fn)); };
+        this.specialTable[0x18] = (i) => { const r = BigInt.asIntN(32, this.gpr[(i >> 21) & 0x1F]) * BigInt.asIntN(32, this.gpr[(i >> 16) & 0x1F]); this.lo = BigInt.asIntN(32, r); this.hi = BigInt.asIntN(32, r >> 32n); };
+        this.specialTable[0x19] = (i) => { const r = BigInt.asUintN(32, this.gpr[(i >> 21) & 0x1F]) * BigInt.asUintN(32, this.gpr[(i >> 16) & 0x1F]); this.lo = BigInt.asIntN(32, r); this.hi = BigInt.asIntN(32, r >> 32n); };
+        this.specialTable[0x1A] = (i) => { const a = BigInt.asIntN(32, this.gpr[(i >> 21) & 0x1F]), b = BigInt.asIntN(32, this.gpr[(i >> 16) & 0x1F]); if (b !== 0n) { this.lo = BigInt.asIntN(32, a / b); this.hi = BigInt.asIntN(32, a % b); } };
+        this.specialTable[0x1B] = (i) => { const a = BigInt.asUintN(32, this.gpr[(i >> 21) & 0x1F]), b = BigInt.asUintN(32, this.gpr[(i >> 16) & 0x1F]); if (b !== 0n) { this.lo = BigInt.asIntN(32, a / b); this.hi = BigInt.asIntN(32, a % b); } };
+        this.specialTable[0x1C] = (i) => { const r = this.gpr[(i >> 21) & 0x1F] * this.gpr[(i >> 16) & 0x1F]; this.lo = BigInt.asIntN(64, r); this.hi = BigInt.asIntN(64, r >> 64n); };
+        this.specialTable[0x1D] = (i) => { const r = BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) * BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F]); this.lo = BigInt.asIntN(64, r); this.hi = BigInt.asIntN(64, r >> 64n); };
+        this.specialTable[0x1E] = (i) => { const a = this.gpr[(i >> 21) & 0x1F], b = this.gpr[(i >> 16) & 0x1F]; if (b !== 0n) { this.lo = a / b; this.hi = a % b; } };
+        this.specialTable[0x1F] = (i) => { const a = BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]), b = BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F]); if (b !== 0n) { this.lo = BigInt.asIntN(64, a / b); this.hi = BigInt.asIntN(64, a % b); } };
+        this.specialTable[0x20] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, this.gpr[(i >> 21) & 0x1F] + this.gpr[(i >> 16) & 0x1F]); };
+        this.specialTable[0x21] = this.specialTable[0x20];
+        this.specialTable[0x22] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, this.gpr[(i >> 21) & 0x1F] - this.gpr[(i >> 16) & 0x1F]); };
+        this.specialTable[0x23] = this.specialTable[0x22];
+        this.specialTable[0x24] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F] & this.gpr[(i >> 16) & 0x1F]; };
+        this.specialTable[0x25] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F] | this.gpr[(i >> 16) & 0x1F]; };
+        this.specialTable[0x26] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F] ^ this.gpr[(i >> 16) & 0x1F]; };
+        this.specialTable[0x27] = (i) => { this.gpr[(i >> 11) & 0x1F] = ~(this.gpr[(i >> 21) & 0x1F] | this.gpr[(i >> 16) & 0x1F]); };
+        this.specialTable[0x2A] = (i) => { this.gpr[(i >> 11) & 0x1F] = (this.gpr[(i >> 21) & 0x1F] < this.gpr[(i >> 16) & 0x1F]) ? 1n : 0n; };
+        this.specialTable[0x2B] = (i) => { this.gpr[(i >> 11) & 0x1F] = (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) < BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F])) ? 1n : 0n; };
+        this.specialTable[0x2C] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F] + this.gpr[(i >> 16) & 0x1F]; };
+        this.specialTable[0x2D] = this.specialTable[0x2C];
+        this.specialTable[0x2E] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F] - this.gpr[(i >> 16) & 0x1F]; };
+        this.specialTable[0x2F] = this.specialTable[0x2E];
+        this.specialTable[0x30] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x31] = (i, pc, ds) => { if (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) >= BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F])) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x32] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x33] = (i, pc, ds) => { if (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) < BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F])) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x34] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] === this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x36] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] !== this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x38] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, this.gpr[(i >> 16) & 0x1F] << BigInt((i >> 6) & 0x1F)); };
+        this.specialTable[0x3A] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F]) >> BigInt((i >> 6) & 0x1F)); };
+        this.specialTable[0x3B] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[(i >> 16) & 0x1F]) >> BigInt((i >> 6) & 0x1F)); };
+        this.specialTable[0x3C] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, this.gpr[(i >> 16) & 0x1F] << (BigInt((i >> 6) & 0x1F) + 32n)); };
+        this.specialTable[0x3E] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F]) >> (BigInt((i >> 6) & 0x1F) + 32n)); };
+        this.specialTable[0x3F] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[(i >> 16) & 0x1F]) >> (BigInt((i >> 6) & 0x1F) + 32n)); };
+    }
+
+    opInvalid(i, pc, ds) { return this.raiseException(10, pc, ds); }
+
     reset() {
+        this.fetchPage = -1;
+        this.fetchView = null;
         this.instructionCount = 0;
         this.pcHistory = new BigUint64Array(100);
         this.pcHistoryIdx = 0;
@@ -36,7 +187,7 @@ class CPU {
             if (!this.isRunning) return;
             let count = 0;
             const budget = 5000000;
-            const batch = 500000;
+            const batch = 1000000;
 
             while (count < budget) {
                 for (let i = 0; i < batch; i++) {
@@ -92,12 +243,14 @@ class CPU {
         this.cp0Registers[12] = 0x30000000n; // Status: CU0=1, CU1=1, FR=0, BEV=0
 
         // PIF RAM seed
-        this.mmu.pifRam[0x24] = 0x00;
-        this.mmu.pifRam[0x25] = 0x00;
         if (isPal) {
-            this.mmu.pifRam[0x26] = 0x00;
-            this.mmu.pifRam[0x27] = 0x78;
+            this.mmu.pifRam[0x24] = 0x3F;
+            this.mmu.pifRam[0x25] = 0x3F;
+            this.mmu.pifRam[0x26] = 0x78;
+            this.mmu.pifRam[0x27] = 0x3F;
         } else {
+            this.mmu.pifRam[0x24] = 0x3F;
+            this.mmu.pifRam[0x25] = 0x3F;
             this.mmu.pifRam[0x26] = 0x3F;
             this.mmu.pifRam[0x27] = 0x3F;
         }
@@ -126,7 +279,7 @@ class CPU {
         }
 
         // Hardware events and interrupts
-        if ((this.instructionCount & 0x3FF) === 0) this.mmu.checkInternalEvents();
+        if ((this.instructionCount & 0x7F) === 0) this.mmu.checkInternalEvents();
 
         const miIntr = this.mmu.miRegisters[2];
         const miMask = this.mmu.miRegisters[3];
@@ -148,14 +301,39 @@ class CPU {
             return;
         }
 
-        const instruction = this.mmu.read32(Number(currentPc));
+        const pcNum = Number(currentPc & 0xFFFFFFFFn);
+        const physPc = (pcNum >= 0x80000000 && pcNum <= 0xBFFFFFFF) ? (pcNum & 0x1FFFFFFF) : pcNum;
+
+        let instruction;
+        if (physPc <= 0x7FFFFF) {
+            const page = physPc >>> 12;
+            if (page !== this.fetchPage) {
+                this.fetchPage = page;
+                this.fetchView = new DataView(this.mmu.memory.rdram, page << 12, 4096);
+            }
+            instruction = this.fetchView.getUint32(physPc & 0xFFF, false);
+        } else {
+            instruction = this.mmu.read32(physPc);
+        }
         this.exceptionRaised = false;
 
         const nextPc = this.decodeAndExecute(instruction, currentPc, false);
         if (this.exceptionRaised || nextPc === null) return;
 
         if (this.branchTaken) {
-            const ds = this.mmu.read32(Number(currentPc + 4n));
+            const dsPc = Number((currentPc + 4n) & 0xFFFFFFFFn);
+            const dsPhys = (dsPc >= 0x80000000 && dsPc <= 0xBFFFFFFF) ? (dsPc & 0x1FFFFFFF) : dsPc;
+            let ds;
+            if (dsPhys <= 0x7FFFFF) {
+                const dsPage = dsPhys >>> 12;
+                if (dsPage !== this.fetchPage) {
+                    this.fetchPage = dsPage;
+                    this.fetchView = new DataView(this.mmu.memory.rdram, dsPage << 12, 4096);
+                }
+                ds = this.fetchView.getUint32(dsPhys & 0xFFF, false);
+            } else {
+                ds = this.mmu.read32(dsPhys);
+            }
             this.decodeAndExecute(ds, currentPc + 4n, true);
             if (this.exceptionRaised) return;
             this.pc = BigInt.asIntN(32, this.branchTarget);
@@ -167,70 +345,8 @@ class CPU {
 
     decodeAndExecute(instruction, currentPc, isDelaySlot) {
         const opcode = (instruction >>> 26) & 0x3F;
-        switch (opcode) {
-            case 0x00: return this.opSPECIAL(instruction, currentPc, isDelaySlot);
-            case 0x01: return this.opREGIMM(instruction, currentPc, isDelaySlot);
-            case 0x02: return this.opJ(instruction, currentPc, isDelaySlot);
-            case 0x03: return this.opJAL(instruction, currentPc, isDelaySlot);
-            case 0x04: return this.opBEQ(instruction, currentPc, isDelaySlot);
-            case 0x05: return this.opBNE(instruction, currentPc, isDelaySlot);
-            case 0x06: return this.opBLEZ(instruction, currentPc, isDelaySlot);
-            case 0x07: return this.opBGTZ(instruction, currentPc, isDelaySlot);
-            case 0x14: return this.opBEQL(instruction, currentPc, isDelaySlot);
-            case 0x15: return this.opBNEL(instruction, currentPc, isDelaySlot);
-            case 0x16: return this.opBLEZL(instruction, currentPc, isDelaySlot);
-            case 0x17: return this.opBGTZL(instruction, currentPc, isDelaySlot);
-            case 0x1C: return this.opSPECIAL2(instruction, currentPc, isDelaySlot);
-            case 0x08: case 0x09: this.opADDIU(instruction); break;
-            case 0x18: case 0x19: this.opDADDIU(instruction); break;
-            case 0x0A: this.opSLTI(instruction); break;
-            case 0x0B: this.opSLTIU(instruction); break;
-            case 0x0C: this.opANDI(instruction); break;
-            case 0x0D: this.opORI(instruction); break;
-            case 0x0E: this.opXORI(instruction); break;
-            case 0x0F: this.opLUI(instruction); break;
-            case 0x10: if (this.opCOP0(instruction)) return null; break;
-            case 0x11: {
-                const pc = this.opCOP1(instruction, currentPc, isDelaySlot);
-                if (pc !== undefined) return pc;
-                break;
-            }
-            case 0x12: case 0x13: break; // COP2, COP3 (NOP)
-            case 0x1A: this.opLDL(instruction); break;
-            case 0x1B: this.opLDR(instruction); break;
-            case 0x20: this.opLB(instruction); break;
-            case 0x21: this.opLH(instruction); break;
-            case 0x22: this.opLWL(instruction); break;
-            case 0x23: this.opLW(instruction); break;
-            case 0x24: this.opLBU(instruction); break;
-            case 0x25: this.opLHU(instruction); break;
-            case 0x26: this.opLWR(instruction); break;
-            case 0x27: this.opLWU(instruction); break;
-            case 0x28: this.opSB(instruction); break;
-            case 0x29: this.opSH(instruction); break;
-            case 0x2A: this.opSWL(instruction); break;
-            case 0x2B: this.opSW(instruction); break;
-            case 0x2C: this.opSDL(instruction); break;
-            case 0x2D: this.opSWR(instruction); break;
-            case 0x2E: this.opSDR(instruction); break;
-            case 0x2F: break; // CACHE
-            case 0x30: this.opLL(instruction); break;
-            case 0x31: this.opLWC1(instruction); break;
-            case 0x32: break; // LWC2 (NOP)
-            case 0x34: this.opLLD(instruction); break;
-            case 0x35: this.opLDC1(instruction); break;
-            case 0x36: break; // LDC2 (NOP)
-            case 0x38: this.opSC(instruction); break;
-            case 0x39: this.opSWC1(instruction); break;
-            case 0x3A: break; // SWC2 (NOP)
-            case 0x3C: this.opSCD(instruction); break;
-            case 0x3D: this.opSDC1(instruction); break;
-            case 0x3E: break; // SDC2 (NOP)
-            case 0x37: this.opLD(instruction); break;
-            case 0x3F: this.opSD(instruction); break;
-            default:
-                return this.raiseException(10, currentPc, isDelaySlot);
-        }
+        const res = this.opTable[opcode](instruction, currentPc, isDelaySlot);
+        if (res !== undefined) return res;
         return currentPc + 4n;
     }
 
@@ -287,131 +403,17 @@ class CPU {
     }
 
     opSPECIAL(i, pc, ds) {
-        const rs = (i >> 21) & 0x1F, rt = (i >> 16) & 0x1F, rd = (i >> 11) & 0x1F, sa = (i >> 6) & 0x1F, f = i & 0x3F;
-        switch (f) {
-            case 0x00: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << BigInt(sa)); break;
-            case 0x01: if (((i >> 16) & 1) === (((this.fcr31 & 0x00800000) ? 1 : 0))) this.gpr[rd] = this.gpr[rs]; break;
-            case 0x02: this.gpr[rd] = BigInt.asIntN(32, BigInt.asUintN(32, this.gpr[rt]) >> BigInt(sa)); break;
-            case 0x03: this.gpr[rd] = BigInt.asIntN(32, BigInt.asIntN(32, this.gpr[rt]) >> BigInt(sa)); break;
-            case 0x04: this.gpr[rd] = BigInt.asIntN(32, (this.gpr[rt] & 0xFFFFFFFFn) << (this.gpr[rs] & 0x1Fn)); break;
-            case 0x06: this.gpr[rd] = BigInt.asIntN(32, BigInt.asUintN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn)); break;
-            case 0x07: this.gpr[rd] = BigInt.asIntN(32, BigInt.asIntN(32, this.gpr[rt]) >> (this.gpr[rs] & 0x1Fn)); break;
-            case 0x0A: if (this.gpr[rt] === 0n) this.gpr[rd] = this.gpr[rs]; break;
-            case 0x0B: if (this.gpr[rt] !== 0n) this.gpr[rd] = this.gpr[rs]; break;
-            case 0x0C: return this.raiseException(8, pc, ds); // SYSCALL
-            case 0x0D: return this.raiseException(9, pc, ds); // BREAK
-            case 0x0E: case 0x0F: break; // Sync / PAL-specific Sync NOP
-            case 0x08: this.branchTarget = this.gpr[rs]; this.branchTaken = true; break;
-            case 0x09: this.branchTarget = this.gpr[rs]; this.gpr[rd] = pc + 8n; this.branchTaken = true; break;
-            case 0x10: this.gpr[rd] = this.hi; break;
-            case 0x11: this.hi = this.gpr[rs]; break;
-            case 0x12: this.gpr[rd] = this.lo; break;
-            case 0x13: this.lo = this.gpr[rs]; break;
-            case 0x14: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (this.gpr[rs] & 0x3Fn)); break;
-            case 0x16: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break;
-            case 0x17: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (this.gpr[rs] & 0x3Fn)); break;
-            case 0x18: {
-                const r = BigInt.asIntN(32, this.gpr[rs]) * BigInt.asIntN(32, this.gpr[rt]);
-                this.lo = BigInt.asIntN(32, r);
-                this.hi = BigInt.asIntN(32, r >> 32n);
-                break;
-            }
-            case 0x19: {
-                const r = BigInt.asUintN(32, this.gpr[rs]) * BigInt.asUintN(32, this.gpr[rt]);
-                this.lo = BigInt.asIntN(32, r);
-                this.hi = BigInt.asIntN(32, r >> 32n);
-                break;
-            }
-            case 0x1A: {
-                const a = BigInt.asIntN(32, this.gpr[rs]), b = BigInt.asIntN(32, this.gpr[rt]);
-                if (b !== 0n) { this.lo = BigInt.asIntN(32, a / b); this.hi = BigInt.asIntN(32, a % b); }
-                break;
-            }
-            case 0x1B: {
-                const a = BigInt.asUintN(32, this.gpr[rs]), b = BigInt.asUintN(32, this.gpr[rt]);
-                if (b !== 0n) { this.lo = BigInt.asIntN(32, a / b); this.hi = BigInt.asIntN(32, a % b); }
-                break;
-            }
-            case 0x1C: {
-                const r = this.gpr[rs] * this.gpr[rt];
-                this.lo = BigInt.asIntN(64, r);
-                this.hi = BigInt.asIntN(64, r >> 64n);
-                break;
-            }
-            case 0x1D: {
-                const r = BigInt.asUintN(64, this.gpr[rs]) * BigInt.asUintN(64, this.gpr[rt]);
-                this.lo = BigInt.asIntN(64, r);
-                this.hi = BigInt.asIntN(64, r >> 64n);
-                break;
-            }
-            case 0x1E: {
-                const a = this.gpr[rs], b = this.gpr[rt];
-                if (b !== 0n) { this.lo = a / b; this.hi = a % b; }
-                break;
-            }
-            case 0x1F: {
-                const a = BigInt.asUintN(64, this.gpr[rs]), b = BigInt.asUintN(64, this.gpr[rt]);
-                if (b !== 0n) { this.lo = BigInt.asIntN(64, a / b); this.hi = BigInt.asIntN(64, a % b); }
-                break;
-            }
-            case 0x20: case 0x21: this.gpr[rd] = BigInt.asIntN(32, this.gpr[rs] + this.gpr[rt]); break;
-            case 0x22: case 0x23: this.gpr[rd] = BigInt.asIntN(32, this.gpr[rs] - this.gpr[rt]); break;
-            case 0x24: this.gpr[rd] = this.gpr[rs] & this.gpr[rt]; break;
-            case 0x25: this.gpr[rd] = this.gpr[rs] | this.gpr[rt]; break;
-            case 0x26: this.gpr[rd] = this.gpr[rs] ^ this.gpr[rt]; break;
-            case 0x27: this.gpr[rd] = ~(this.gpr[rs] | this.gpr[rt]); break;
-            case 0x2A: this.gpr[rd] = (this.gpr[rs] < this.gpr[rt]) ? 1n : 0n; break;
-            case 0x2B: this.gpr[rd] = (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) ? 1n : 0n; break;
-            case 0x2C: case 0x2D: this.gpr[rd] = this.gpr[rs] + this.gpr[rt]; break;
-            case 0x2E: case 0x2F: this.gpr[rd] = this.gpr[rs] - this.gpr[rt]; break;
-            case 0x30: if (this.gpr[rs] >= this.gpr[rt]) return this.raiseException(13, pc, ds); break;
-            case 0x31: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, pc, ds); break;
-            case 0x32: if (this.gpr[rs] < this.gpr[rt]) return this.raiseException(13, pc, ds); break;
-            case 0x33: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, this.gpr[rt])) return this.raiseException(13, pc, ds); break;
-            case 0x34: if (this.gpr[rs] === this.gpr[rt]) return this.raiseException(13, pc, ds); break;
-            case 0x36: if (this.gpr[rs] !== this.gpr[rt]) return this.raiseException(13, pc, ds); break;
-            case 0x38: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << BigInt(sa)); break;
-            case 0x3A: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> BigInt(sa)); break;
-            case 0x3B: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> BigInt(sa)); break;
-            case 0x3C: this.gpr[rd] = BigInt.asIntN(64, this.gpr[rt] << (BigInt(sa) + 32n)); break;
-            case 0x3E: this.gpr[rd] = BigInt.asIntN(64, BigInt.asUintN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break;
-            case 0x3F: this.gpr[rd] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[rt]) >> (BigInt(sa) + 32n)); break;
-            default: return this.raiseException(10, pc, ds);
-        }
+        const f = i & 0x3F;
+        const res = this.specialTable[f](i, pc, ds);
+        if (res !== undefined) return res;
         return pc + 4n;
     }
 
     opREGIMM(i, pc, ds) {
-        const rs = (i >> 21) & 0x1F, s = (i >> 16) & 0x1F, imm = BigInt.asIntN(16, BigInt(i & 0xFFFF));
-        let taken = false, link = false, likely = false;
-        switch (s) {
-            case 0x00: if (this.gpr[rs] < 0n) taken = true; break;
-            case 0x01: if (this.gpr[rs] >= 0n) taken = true; break;
-            case 0x02: if (this.gpr[rs] < 0n) { taken = true; likely = true; } break;
-            case 0x03: if (this.gpr[rs] >= 0n) { taken = true; likely = true; } break;
-            case 0x10: if (this.gpr[rs] < 0n) { taken = true; link = true; } break;
-            case 0x11: if (this.gpr[rs] >= 0n) { taken = true; link = true; } break;
-            case 0x12: if (this.gpr[rs] < 0n) { taken = true; link = true; likely = true; } break;
-            case 0x13: if (this.gpr[rs] >= 0n) { taken = true; link = true; likely = true; } break;
-            case 0x08: if (this.gpr[rs] >= imm) return this.raiseException(13, pc, ds); break;
-            case 0x09: if (BigInt.asUintN(64, this.gpr[rs]) >= BigInt.asUintN(64, imm)) return this.raiseException(13, pc, ds); break;
-            case 0x0A: if (this.gpr[rs] < imm) return this.raiseException(13, pc, ds); break;
-            case 0x0B: if (BigInt.asUintN(64, this.gpr[rs]) < BigInt.asUintN(64, imm)) return this.raiseException(13, pc, ds); break;
-            case 0x0C: if (this.gpr[rs] === imm) return this.raiseException(13, pc, ds); break;
-            case 0x0E: if (this.gpr[rs] !== imm) return this.raiseException(13, pc, ds); break;
-        }
-        if (link) this.gpr[31] = pc + 8n;
-        if (taken) {
-            this.branchTarget = pc + 4n + (imm << 2n);
-            this.branchTaken = true;
-            return pc + 4n;
-        } else if (likely) {
-            return pc + 8n;
-        } else {
-            this.branchTarget = pc + 8n;
-            this.branchTaken = true;
-            return pc + 4n;
-        }
+        const s = (i >> 16) & 0x1F;
+        const res = this.regimmTable[s](i, pc, ds);
+        if (res !== undefined) return res;
+        return pc + 4n;
     }
 
     opJ(i, pc, ds) { this.branchTarget = BigInt.asIntN(32, (pc & 0xF0000000n) | (BigInt(i & 0x03FFFFFF) << 2n)); this.branchTaken = true; return pc + 4n; }
@@ -718,10 +720,9 @@ class CPU {
 
     raiseException(code, pc, ds) {
         if (code !== 0) {
-            const instr = this.mmu.read32(Number(pc));
-            const history = Array.from(this.pcHistory).map(x => x.toString(16)).join(',');
-            console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} t0=0x${this.gpr[8].toString(16)} t1=0x${this.gpr[9].toString(16)} v0=0x${this.gpr[2].toString(16)}`);
-            console.warn(`PC History: ${history}`);
+            let instr = 0;
+            try { instr = this.mmu.read32(Number(pc & ~3n)); } catch(e) {}
+            console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} Status=0x${this.cp0Registers[12].toString(16)} Cause=0x${this.cp0Registers[13].toString(16)}`);
         }
         const status = this.cp0Registers[12], bev = (status >> 22n) & 1n;
         const vector = bev ? 0xBFC00380n : 0x80000180n;
