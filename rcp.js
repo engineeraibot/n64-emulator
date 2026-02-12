@@ -139,7 +139,7 @@ class RCP {
             vertices: new Array(64).fill(0).map(() => ({ x: 0, y: 0, z: 0, w: 1, r: 0, g: 0, b: 0, a: 0, s: 0, t: 0 })),
             modelviewStack: [this.createIdentityMatrix()],
             projectionMatrix: this.createIdentityMatrix(),
-            tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0, uls: 0, ult: 0, lrs: 0, lrt: 0 })),
+            tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0, uls: 0, ult: 0, lrs: 0, lrt: 0, maskS: 0, shiftS: 0, maskT: 0, shiftT: 0 })),
             combine: { hi: 0, lo: 0 },
             primColor: 0xFFFFFFFF, envColor: 0, fillColor: 0, colorImage: 0, colorImageWidth: 320, colorImageSize: 2,
             textureImage: 0, textureImageWidth: 0, textureImageSize: 2,
@@ -214,7 +214,7 @@ class RCP {
                 case 0xB1: this.handleG_TRI2(hi, lo, false); break;
                 case 0xBC: case 0xB6: this.handleG_MOVEWORD(hi, lo); break;
                 case 0xBD: case 0xB7: this.handleG_MOVEMEM(hi, lo); break;
-                case 0xDB: this.rspState.segments[(hi >> 2) & 0xF] = lo & 0x00FFFFFF; break;
+                case 0xDB: this.rspState.segments[(hi >> 2) & 0xF] = lo; break;
                 case 0xFD:
                     this.rspState.textureImage = this.resolvePhysicalAddress(lo);
                     this.rspState.textureImageWidth = (hi & 0xFFF) + 1;
@@ -297,20 +297,23 @@ class RCP {
     resolveAddress(addr) {
         const seg = (addr >>> 24) & 0xF;
         const base = this.rspState.segments[seg];
-        // If segment base looks like a virtual or physical address with mirroring, preserve it
-        if ((base & 0xF8000000) !== 0) {
-            return (base + (addr & 0x00FFFFFF)) | 0x80000000;
+        const res = (base + (addr & 0x00FFFFFF)) >>> 0;
+        // If it's a ROM address (Domain 1 or 2), return it as is (will be handled by MMU)
+        if ((res >= 0x08000000 && res <= 0x0FFFFFFF) || (res >= 0x10000000 && res <= 0x1FBFFFFF)) {
+            return res;
         }
-        return ((base & 0x00FFFFFF) + (addr & 0x00FFFFFF)) | 0x80000000;
+        // Otherwise, assume it's RDRAM and ensure it's in KSEG0 for the MMU
+        return (res & 0x007FFFFF) | 0x80000000;
     }
 
     resolvePhysicalAddress(addr) {
         const seg = (addr >>> 24) & 0xF;
         const base = this.rspState.segments[seg];
-        if ((base & 0x10000000) || (base & 0x08000000)) {
-            return (base + (addr & 0x00FFFFFF)) & 0x1FFFFFFF;
+        const res = (base + (addr & 0x00FFFFFF)) >>> 0;
+        if ((res >= 0x08000000 && res <= 0x0FFFFFFF) || (res >= 0x10000000 && res <= 0x1FBFFFFF)) {
+            return res;
         }
-        return (base & 0x00FFFFFF) + (addr & 0x00FFFFFF);
+        return res & 0x007FFFFF;
     }
 
     handleG_VTX(hi, lo) {
@@ -474,8 +477,19 @@ class RCP {
         if (!this.rspState.useTexture || !this.rspState.textureImage) return { r: 255, g: 255, b: 255, a: 255 };
         const tile = this.rspState.tiles[tileIdx];
         let ts = Math.floor(s / 32), tt = Math.floor(t / 32);
-        const wrapS = (this.rspState.otherModeHi >> 14) & 0xF ? (1 << ((this.rspState.otherModeHi >> 14) & 0xF)) : 1024;
-        const wrapT = (this.rspState.otherModeHi >> 4) & 0xF ? (1 << ((this.rspState.otherModeHi >> 4) & 0xF)) : 1024;
+
+        const applyShiftMask = (val, shift, mask) => {
+            if (shift > 0 && shift <= 10) val >>= shift;
+            else if (shift > 10) val <<= (16 - shift);
+            if (mask > 0) val &= (1 << mask) - 1;
+            return val;
+        };
+
+        ts = applyShiftMask(ts, tile.shiftS, tile.maskS);
+        tt = applyShiftMask(tt, tile.shiftT, tile.maskT);
+
+        const wrapS = tile.maskS ? (1 << tile.maskS) : 1024;
+        const wrapT = tile.maskT ? (1 << tile.maskT) : 1024;
         ts = Math.abs(ts) % wrapS; tt = Math.abs(tt) % wrapT;
 
         if (tile.format === 0 && tile.size === 2) { // RGBA 16-bit
@@ -530,8 +544,8 @@ class RCP {
                 }
             }
         };
-        const A = get((hi >> 20) & 0xF, false), B = get((hi >> 15) & 0x1F, false), C = get((hi >> 10) & 0x1F, false), D = get((hi >> 6) & 0x7, false);
-        const aA = get((lo >> 12) & 0x7, true), aB = get((lo >> 9) & 0x7, true), aC = get((lo >> 6) & 0x7, true), aD = get((lo >> 3) & 0x7, true);
+        const A = get((hi >> 20) & 0xF, false), B = get((lo >> 28) & 0xF, false), C = get((hi >> 15) & 0x1F, false), D = get((lo >> 15) & 0x7, false);
+        const aA = get((hi >> 12) & 0x7, true), aB = get((lo >> 12) & 0x7, true), aC = get((hi >> 9) & 0x7, true), aD = get((lo >> 9) & 0x7, true);
         return {
             r: Math.max(0, Math.min(255, (A.r - B.r) * (C.r / 255) + D.r)),
             g: Math.max(0, Math.min(255, (A.g - B.g) * (C.g / 255) + D.g)),
@@ -553,6 +567,10 @@ class RCP {
             this.rspState.tiles[t].line = (hi >> 9) & 0x1FF;
             this.rspState.tiles[t].tmem = hi & 0x1FF;
             this.rspState.tiles[t].palette = (lo >> 20) & 0xF;
+            this.rspState.tiles[t].maskT = (lo >> 14) & 0xF;
+            this.rspState.tiles[t].shiftT = (lo >> 10) & 0xF;
+            this.rspState.tiles[t].maskS = (lo >> 4) & 0xF;
+            this.rspState.tiles[t].shiftS = lo & 0xF;
         }
     }
 
@@ -597,7 +615,7 @@ class RCP {
 
     handleG_MOVEWORD(hi, lo) {
         if (((hi >> 16) & 0xFF) === 0x06) {
-            this.rspState.segments[(hi & 0xFFFF) >> 2 & 0xF] = lo & 0xFFFFFF;
+            this.rspState.segments[(hi & 0xFFFF) >> 2 & 0xF] = lo;
         }
     }
 
