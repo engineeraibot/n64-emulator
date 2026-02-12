@@ -21,10 +21,14 @@ class CPU {
         this.regimmTable[0x01] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
         this.regimmTable[0x02] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
         this.regimmTable[0x03] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
-        this.regimmTable[0x10] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
-        this.regimmTable[0x11] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
-        this.regimmTable[0x12] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
-        this.regimmTable[0x13] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x04] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x06] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x10] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x11] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x12] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x13] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x14] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
+        this.regimmTable[0x16] = (i, pc, ds) => { this.gpr[31] = BigInt.asIntN(32, pc + 8n); if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
         this.regimmTable[0x08] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
         this.regimmTable[0x09] = (i, pc, ds) => { if (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) >= BigInt.asUintN(64, BigInt.asIntN(16, BigInt(i & 0xFFFF)))) return this.raiseException(13, pc, ds); };
         this.regimmTable[0x0A] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
@@ -101,8 +105,18 @@ class CPU {
         this.specialTable[0x04] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, (this.gpr[(i >> 16) & 0x1F] & 0xFFFFFFFFn) << (this.gpr[(i >> 21) & 0x1F] & 0x1Fn)); };
         this.specialTable[0x06] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, BigInt.asUintN(32, this.gpr[(i >> 16) & 0x1F]) >> (this.gpr[(i >> 21) & 0x1F] & 0x1Fn)); };
         this.specialTable[0x07] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, BigInt.asIntN(32, this.gpr[(i >> 16) & 0x1F]) >> (this.gpr[(i >> 21) & 0x1F] & 0x1Fn)); };
-        this.specialTable[0x08] = (i) => { this.branchTarget = this.gpr[(i >> 21) & 0x1F]; this.branchTaken = true; };
-        this.specialTable[0x09] = (i, pc) => { this.branchTarget = this.gpr[(i >> 21) & 0x1F]; this.gpr[(i >> 11) & 0x1F] = pc + 8n; this.branchTaken = true; };
+        this.specialTable[0x08] = (i, pc) => {
+            this.branchTarget = this.gpr[(i >> 21) & 0x1F];
+            this.branchTaken = true;
+            if (this.branchTarget > 0xFFFFFFFFn || this.branchTarget < -0x80000000n) {
+                // console.warn(`JR to 64-bit address: 0x${this.branchTarget.toString(16)} at PC=0x${pc.toString(16)}`);
+            }
+        };
+        this.specialTable[0x09] = (i, pc) => {
+            this.branchTarget = this.gpr[(i >> 21) & 0x1F];
+            this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(32, pc + 8n);
+            this.branchTaken = true;
+        };
         this.specialTable[0x0A] = (i) => { if (this.gpr[(i >> 16) & 0x1F] === 0n) this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F]; };
         this.specialTable[0x0B] = (i) => { if (this.gpr[(i >> 16) & 0x1F] !== 0n) this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F]; };
         this.specialTable[0x0C] = (i, pc, ds) => this.raiseException(8, pc, ds);
@@ -134,9 +148,9 @@ class CPU {
         this.specialTable[0x27] = (i) => { this.gpr[(i >> 11) & 0x1F] = ~(this.gpr[(i >> 21) & 0x1F] | this.gpr[(i >> 16) & 0x1F]); };
         this.specialTable[0x2A] = (i) => { this.gpr[(i >> 11) & 0x1F] = (this.gpr[(i >> 21) & 0x1F] < this.gpr[(i >> 16) & 0x1F]) ? 1n : 0n; };
         this.specialTable[0x2B] = (i) => { this.gpr[(i >> 11) & 0x1F] = (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) < BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F])) ? 1n : 0n; };
-        this.specialTable[0x2C] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F] + this.gpr[(i >> 16) & 0x1F]; };
+        this.specialTable[0x2C] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, this.gpr[(i >> 21) & 0x1F] + this.gpr[(i >> 16) & 0x1F]); };
         this.specialTable[0x2D] = this.specialTable[0x2C];
-        this.specialTable[0x2E] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F] - this.gpr[(i >> 16) & 0x1F]; };
+        this.specialTable[0x2E] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, this.gpr[(i >> 21) & 0x1F] - this.gpr[(i >> 16) & 0x1F]); };
         this.specialTable[0x2F] = this.specialTable[0x2E];
         this.specialTable[0x30] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
         this.specialTable[0x31] = (i, pc, ds) => { if (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) >= BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F])) return this.raiseException(13, pc, ds); };
@@ -152,7 +166,10 @@ class CPU {
         this.specialTable[0x3F] = (i) => { this.gpr[(i >> 11) & 0x1F] = BigInt.asIntN(64, BigInt.asIntN(64, this.gpr[(i >> 16) & 0x1F]) >> (BigInt((i >> 6) & 0x1F) + 32n)); };
     }
 
-    opInvalid(i, pc, ds) { return this.raiseException(10, pc, ds); }
+    opInvalid(i, pc, ds) {
+        console.error(`INVALID OPCODE 0x${((i >>> 26) & 0x3F).toString(16)} func=0x${(i & 0x3F).toString(16)} at PC=0x${pc.toString(16)} (raw=0x${i.toString(16)})`);
+        return this.raiseException(10, pc, ds);
+    }
 
     reset() {
         this.fetchPage = -1;
@@ -234,7 +251,7 @@ class CPU {
         this.gpr[16] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0, false))); // s0
 
         const countryCode = romDataView.getUint8(0x3E);
-        const isPal = (countryCode === 0x50 || countryCode === 0x44 || countryCode === 0x46);
+        const isPal = (countryCode === 0x50 || countryCode === 0x44 || countryCode === 0x46 || countryCode === 0x45);
         this.gpr[17] = isPal ? 3n : 1n; // s1 (CIC type)
 
         this.gpr[18] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x10, false))); // s2 (checksum)
@@ -293,6 +310,7 @@ class CPU {
         const cause = this.cp0Registers[13];
         if ((status & 1n) && !(status & 2n) && ((status >> 8n) & (cause >> 8n) & 0xFFn)) {
             this.raiseException(0, this.pc, false);
+            return;
         }
 
         const currentPc = this.pc;
@@ -303,6 +321,10 @@ class CPU {
 
         const pcNum = Number(currentPc & 0xFFFFFFFFn);
         const physPc = (pcNum >= 0x80000000 && pcNum <= 0xBFFFFFFF) ? (pcNum & 0x1FFFFFFF) : pcNum;
+
+        if (physPc > 0x7FFFFF && physPc < 0x04000000) {
+            console.warn(`PC out of RDRAM: 0x${currentPc.toString(16)} (phys: 0x${physPc.toString(16)})`);
+        }
 
         let instruction;
         if (physPc <= 0x7FFFFF) {
@@ -416,8 +438,15 @@ class CPU {
         return pc + 4n;
     }
 
-    opJ(i, pc, ds) { this.branchTarget = BigInt.asIntN(32, (pc & 0xF0000000n) | (BigInt(i & 0x03FFFFFF) << 2n)); this.branchTaken = true; return pc + 4n; }
-    opJAL(i, pc, ds) { this.gpr[31] = BigInt.asIntN(32, pc + 8n); return this.opJ(i, pc); }
+    opJ(i, pc, ds) {
+        this.branchTarget = BigInt.asIntN(32, ((pc + 4n) & 0xF0000000n) | (BigInt(i & 0x03FFFFFF) << 2n));
+        this.branchTaken = true;
+        if ((this.branchTarget & 0x0F000000n) > 0x00800000n && (this.branchTarget & 0x0F000000n) < 0x04000000n) {
+            console.warn(`Jump to invalid: 0x${this.branchTarget.toString(16)} at PC=0x${pc.toString(16)}`);
+        }
+        return pc + 4n;
+    }
+    opJAL(i, pc, ds) { this.gpr[31] = BigInt.asIntN(32, pc + 8n); return this.opJ(i, pc, ds); }
     opBEQ(i, pc, ds) {
         if (this.gpr[(i >> 21) & 0x1F] === this.gpr[(i >> 16) & 0x1F]) {
             this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n);
@@ -558,7 +587,7 @@ class CPU {
         const d = this.mmu.read64(a & ~7);
         const v = BigInt.asUintN(64, this.gpr[(i >> 16) & 0x1F]);
         const s = a & 7;
-        this.mmu.write64(a & ~7, (s === 7) ? v : (d & ((1n << (BigInt(s + 1) * 8n)) - 1n)) | (v << BigInt((7 - s) * 8)));
+        this.mmu.write64(a & ~7, (s === 7) ? v : (d & ((1n << (BigInt(7 - s) * 8n)) - 1n)) | (v << BigInt((7 - s) * 8)));
     }
 
     opLL(i) { this.opLW(i); }
@@ -626,21 +655,21 @@ class CPU {
         else if (sub >= 0x10) {
             const fmt = sub & 7;
             if (fmt === 0) { // S
-                const v1 = this.fprView.getFloat32(fs * 8 + 4, false), v2 = this.fprView.getFloat32(rt * 8 + 4, false);
-                if (f === 0x00) this.fprView.setFloat32(fd * 8 + 4, v1 + v2, false);
-                else if (f === 0x01) this.fprView.setFloat32(fd * 8 + 4, v1 - v2, false);
-                else if (f === 0x02) this.fprView.setFloat32(fd * 8 + 4, v1 * v2, false);
-                else if (f === 0x03) this.fprView.setFloat32(fd * 8 + 4, v1 / v2, false);
-                else if (f === 0x04) this.fprView.setFloat32(fd * 8 + 4, Math.sqrt(v1), false);
-                else if (f === 0x05) this.fprView.setFloat32(fd * 8 + 4, Math.abs(v1), false);
-                else if (f === 0x06) this.fprView.setFloat32(fd * 8 + 4, v1, false);
-                else if (f === 0x07) this.fprView.setFloat32(fd * 8 + 4, -v1, false);
-                else if (f === 0x0C) this.fprView.setInt32(fd * 8 + 4, Math.round(v1), false);
-                else if (f === 0x0D) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false);
-                else if (f === 0x0E) this.fprView.setInt32(fd * 8 + 4, Math.ceil(v1), false);
-                else if (f === 0x0F) this.fprView.setInt32(fd * 8 + 4, Math.floor(v1), false);
+                const v1 = this.fprView.getFloat32(this.getFprAddr32(fs), false), v2 = this.fprView.getFloat32(this.getFprAddr32(rt), false);
+                if (f === 0x00) this.fprView.setFloat32(this.getFprAddr32(fd), v1 + v2, false);
+                else if (f === 0x01) this.fprView.setFloat32(this.getFprAddr32(fd), v1 - v2, false);
+                else if (f === 0x02) this.fprView.setFloat32(this.getFprAddr32(fd), v1 * v2, false);
+                else if (f === 0x03) this.fprView.setFloat32(this.getFprAddr32(fd), v1 / v2, false);
+                else if (f === 0x04) this.fprView.setFloat32(this.getFprAddr32(fd), Math.sqrt(v1), false);
+                else if (f === 0x05) this.fprView.setFloat32(this.getFprAddr32(fd), Math.abs(v1), false);
+                else if (f === 0x06) this.fprView.setFloat32(this.getFprAddr32(fd), v1, false);
+                else if (f === 0x07) this.fprView.setFloat32(this.getFprAddr32(fd), -v1, false);
+                else if (f === 0x0C) this.fprView.setInt32(this.getFprAddr32(fd), Math.round(v1), false);
+                else if (f === 0x0D) this.fprView.setInt32(this.getFprAddr32(fd), Math.trunc(v1), false);
+                else if (f === 0x0E) this.fprView.setInt32(this.getFprAddr32(fd), Math.ceil(v1), false);
+                else if (f === 0x0F) this.fprView.setInt32(this.getFprAddr32(fd), Math.floor(v1), false);
                 else if (f === 0x21) this.fprView.setFloat64(fd * 8, v1, false);
-                else if (f === 0x24) this.fprView.setInt32(fd * 8 + 4, Math.trunc(v1), false);
+                else if (f === 0x24) this.fprView.setInt32(this.getFprAddr32(fd), Math.trunc(v1), false);
                 else if (f === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false);
                 else if ((f & 0x30) === 0x30) {
                     let cnd = false, n = isNaN(v1) || isNaN(v2);
@@ -680,8 +709,8 @@ class CPU {
                 }
             }
             else if (fmt === 4) { // W
-                const v = this.fprView.getInt32(fs * 8 + 4, false);
-                if (f === 0x20) this.fprView.setFloat32(fd * 8 + 4, v, false);
+                const v = this.fprView.getInt32(this.getFprAddr32(fs), false);
+                if (f === 0x20) this.fprView.setFloat32(this.getFprAddr32(fd), v, false);
                 else if (f === 0x21) this.fprView.setFloat64(fd * 8, v, false);
             }
             else if (fmt === 5) { // L
@@ -713,17 +742,20 @@ class CPU {
                 this.pc = this.cp0Registers[14];
                 this.cp0Registers[12] &= ~2n;
             }
-            return true;
+            return null;
         }
-        return false;
+        return undefined;
     }
 
     raiseException(code, pc, ds) {
-        if (code !== 0) {
+        if (code !== 0 && code !== 8 && code !== 13) {
             let instr = 0;
             try { instr = this.mmu.read32(Number(pc & ~3n)); } catch(e) {}
             console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} Status=0x${this.cp0Registers[12].toString(16)} Cause=0x${this.cp0Registers[13].toString(16)}`);
+            console.warn(`t0=0x${this.gpr[8].toString(16)} t1=0x${this.gpr[9].toString(16)} v0=0x${this.gpr[2].toString(16)} sp=0x${this.gpr[29].toString(16)}`);
+            console.warn(`PC History: ${Array.from(this.pcHistory).map(x => x.toString(16)).join(',')}`);
         }
+        if (code === 4 || code === 5) this.cp0Registers[8] = pc;
         const status = this.cp0Registers[12], bev = (status >> 22n) & 1n;
         const vector = bev ? 0xBFC00380n : 0x80000180n;
         this.cp0Registers[13] = (this.cp0Registers[13] & ~0x7Cn) | (BigInt(code) << 2n);
