@@ -215,7 +215,7 @@ class CPU {
         this.pc = BigInt.asIntN(32, entryPoint);
 
         const ramOffset = Number(entryPoint & 0x00FFFFFFn);
-        const kSize = Math.min(0x100000, romView.length - 0x1000);
+        const kSize = Math.min(0x200000, romView.length - 0x1000);
 
         // Setup exception vectors
         const j400 = 0x08000100;
@@ -462,7 +462,7 @@ class CPU {
     opANDI(i) { this.gpr[(i >> 16) & 0x1F] = this.gpr[(i >> 21) & 0x1F] & BigInt(i & 0xFFFF); }
     opORI(i) { this.gpr[(i >> 16) & 0x1F] = this.gpr[(i >> 21) & 0x1F] | BigInt(i & 0xFFFF); }
     opXORI(i) { this.gpr[(i >> 16) & 0x1F] = this.gpr[(i >> 21) & 0x1F] ^ BigInt(i & 0xFFFF); }
-    opLUI(i) { this.gpr[(i >> 16) & 0x1F] = BigInt.asIntN(32, BigInt(i & 0xFFFF) << 16n); }
+    opLUI(i) { this.gpr[(i >> 16) & 0x1F] = BigInt.asIntN(32, BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 16n); }
 
     opLB(i) { this.gpr[(i >> 16) & 0x1F] = BigInt.asIntN(8, BigInt(this.mmu.read8(Number(this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF)))))); }
     opLBU(i) { this.gpr[(i >> 16) & 0x1F] = BigInt.asUintN(8, BigInt(this.mmu.read8(Number(this.gpr[(i >> 21) & 0x1F] + BigInt.asIntN(16, BigInt(i & 0xFFFF)))))); }

@@ -14,6 +14,20 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // Auto-load ROM if available
+    fetch("Super Mario 64 (Europe) (En,Fr,De).n64").then(r => r.arrayBuffer()).then(buf => {
+        console.log("Auto-loading ROM...");
+        ram.loadRom(buf);
+        romLoaderDiv.style.display = 'none';
+        cpu.run();
+    }).catch(e => console.warn("Auto-load ROM failed:", e));
+
+    setInterval(() => {
+        if (cpu.isRunning) {
+            console.log(`Status: PC=0x${cpu.pc.toString(16)} Instr=${cpu.instructionCount} VI_Origin=0x${mmu.viRegisters[1].toString(16)}`);
+        }
+    }, 2000);
+
     const texture = new THREE.DataTexture(framebuffer, FB_WIDTH, FB_HEIGHT, THREE.RGBAFormat);
     texture.flipY = false; texture.needsUpdate = true;
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: texture })));
