@@ -302,7 +302,7 @@ class MMU {
             let i = 0;
             let channel = 0;
             while (i < 0x3F) {
-                if (this.pifRam[i] === 0xFF) { i++; continue; }
+                if (this.pifRam[i] === 0xFF) { i++; channel++; continue; }
                 if (this.pifRam[i] === 0x00 || this.pifRam[i] === 0xFE) break;
 
                 const sl = this.pifRam[i] & 0x3F;

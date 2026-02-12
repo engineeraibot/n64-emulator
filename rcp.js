@@ -211,12 +211,15 @@ class RCP {
                     this.rspState.isF3DEX2 = true;
                     this.handleG_VTX(hi, lo);
                     break;
+                case 0x05: // G_TRI1 (F3DEX2)
+                    this.handleG_TRI1(hi, lo, true);
+                    break;
                 case 0x06: // G_DL (F3D) or G_TRI2 (F3DEX2)
                     if (!this.rspState.isF3DEX2) {
                         const nextDl = this.resolveAddress(lo);
                         if (depth < 16) { stack.push(pc); depth++; pc = nextDl; }
                     } else {
-                        // handleG_TRI2(hi, lo);
+                        this.handleG_TRI2(hi, lo, true);
                     }
                     break;
                 case 0xDE: // DL (F3DEX2)
@@ -233,13 +236,12 @@ class RCP {
                 case 0xDA: this.handleG_MTX(hi, lo); break;
                 case 0xD8: if (this.rspState.modelviewStack.length > 1) this.rspState.modelviewStack.pop(); break;
                 case 0x04: this.handleG_VTX(hi, lo); break;
-                case 0xBF: this.handleG_TRI1(hi, lo, false); break;
-                case 0xB1: this.handleG_TRI2(hi, lo, false); break;
+                case 0xBF: this.handleG_TRI1(hi, lo, this.rspState.isF3DEX2); break;
+                case 0xB1: this.handleG_TRI2(hi, lo, this.rspState.isF3DEX2); break;
                 case 0xBC: case 0xB6: this.handleG_MOVEWORD(hi, lo); break;
                 case 0xBD: case 0xB7: this.handleG_MOVEMEM(hi, lo); break;
-                case 0xDB: // G_MOVEWORD
-                    const type = (hi >> 16) & 0xFF;
-                    if (type === 0x06) this.rspState.segments[(hi >> 2) & 0xF] = lo;
+                case 0xDB: // G_MOVEWORD or G_SETSEGMENT
+                    this.rspState.segments[(hi & 0xFFFF) >> 2 & 0xF] = lo;
                     break;
                 case 0xFD:
                     this.rspState.textureImage = this.resolvePhysicalAddress(lo);
@@ -589,7 +591,9 @@ class RCP {
 
     updateUseTexture(hi, lo) {
         const is = (s) => s === 0 || s === 1;
-        this.rspState.useTexture = is((hi >> 20) & 0xF) || is((hi >> 15) & 0x1F) || is((hi >> 10) & 0x1F) || is((hi >> 6) & 0x7) || is((lo >> 12) & 0x7) || is((lo >> 9) & 0x7) || is((lo >> 6) & 0x7) || is((lo >> 3) & 0x7);
+        const colorA = (hi >> 20) & 0xF, colorB = (lo >> 28) & 0xF, colorC = (hi >> 15) & 0x1F, colorD = (lo >> 15) & 0x7;
+        const alphaA = (hi >> 12) & 0x7, alphaB = (lo >> 12) & 0x7, alphaC = (hi >> 9) & 0x7, alphaD = (lo >> 9) & 0x7;
+        this.rspState.useTexture = is(colorA) || is(colorB) || is(colorC) || is(colorD) || is(alphaA) || is(alphaB) || is(alphaC) || is(alphaD);
     }
 
     handleG_SETTILE(hi, lo) {

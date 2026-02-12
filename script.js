@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 2000);
 
     const texture = new THREE.DataTexture(framebuffer, FB_WIDTH, FB_HEIGHT, THREE.RGBAFormat);
-    texture.flipY = false; texture.needsUpdate = true;
+    texture.flipY = true; texture.needsUpdate = true;
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: texture })));
 
     let lastOrigin = -1, lastWidth = -1, lastType = -1;
@@ -73,7 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             framebuffer[fbIdx++] = rd.getUint8(a);
                             framebuffer[fbIdx++] = rd.getUint8(a + 1);
                             framebuffer[fbIdx++] = rd.getUint8(a + 2);
-                            framebuffer[fbIdx++] = 255;
+                            framebuffer[fbIdx++] = rd.getUint8(a + 3);
                         }
                     } else {
                         framebuffer[fbIdx++] = 0; framebuffer[fbIdx++] = 0; framebuffer[fbIdx++] = 0; framebuffer[fbIdx++] = 255;
