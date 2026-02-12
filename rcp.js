@@ -4,11 +4,13 @@ class RCP {
         this.framebuffer = framebuffer;
         this.tmem = new Uint8Array(4096);
         this.rdpCommandCount = 0;
+        this.rspTaskCount = 0;
         this.reset();
     }
 
     reset() {
         this.rdpCommandCount = 0;
+        this.rspTaskCount = 0;
         this.rspState = null;
         if (this.mmu) {
             this.mmu.spRegisters[4] |= 0x01; // HALT
@@ -149,6 +151,7 @@ class RCP {
     }
 
     runRspTask() {
+        this.rspTaskCount++;
         const taskPtr = 0xFC0;
         const type = this.mmu.spDmemView.getUint32(taskPtr + 0x00, false);
         const dataPtr = this.mmu.spDmemView.getUint32(taskPtr + 0x30, false);
