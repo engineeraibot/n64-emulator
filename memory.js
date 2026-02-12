@@ -52,7 +52,7 @@ class Memory {
 
         this.rom = romBuffer;
         this.romView = new DataView(this.rom);
-        console.log("ROM loaded and normalized.");
+        console.log("ROM loaded and normalized. Size:", this.rom.byteLength);
     }
 
     readRom8(address) {

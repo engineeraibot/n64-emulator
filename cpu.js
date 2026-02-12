@@ -268,6 +268,11 @@ class CPU {
 
         if ((this.instructionCount % 5000000) === 0) {
             console.log(`CPU Status: PC=0x${this.pc.toString(16)} Instructions=${this.instructionCount}`);
+            let history = [];
+            for (let i = 0; i < 20; i++) {
+                history.push(this.pcHistory[(this.pcHistoryIdx + i + 80) % 100].toString(16));
+            }
+            console.log("Recent PC History:", history);
         }
 
         // CP0 Count register (half frequency)
@@ -719,6 +724,7 @@ class CPU {
     }
 
     raiseException(code, pc, ds) {
+        if (code === 0) console.log(`Interrupt at PC=0x${pc.toString(16)}`);
         if (code !== 0) {
             let instr = 0;
             try { instr = this.mmu.read32(Number(pc & ~3n)); } catch(e) {}
