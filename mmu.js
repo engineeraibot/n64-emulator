@@ -356,13 +356,18 @@ class MMU {
 
             if ((ra + actualLen) <= 0x800000 && (srcStart + actualLen) <= rs) {
                 rd.set(rv.subarray(srcStart, srcStart + actualLen), ra);
+                if (ra < 0x200) {
+                   for (let i = 0; i < 16; i++) console.log(`PI DMA to Vector (fast): addr=0x${(ra + i).toString(16)} val=0x${rd[ra+i].toString(16)}`);
+                }
             } else {
                 for (let i = 0; i < actualLen; i++) {
-                    rd[(ra + i) & 0x7FFFFF] = rv[(srcStart + i) % rs];
+                    const val = rv[(srcStart + i) % rs];
+                    if (ra + i < 0x10) console.log(`PI DMA to Vector (slow): addr=0x${(ra + i).toString(16)} val=0x${val.toString(16)}`);
+                    rd[(ra + i) & 0x7FFFFF] = val;
                 }
             }
         }
-        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + Math.floor(len / 4);
+        this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + len;
     }
 
     doSiDma(toPif) {

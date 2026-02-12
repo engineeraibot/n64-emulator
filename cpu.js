@@ -107,8 +107,8 @@ class CPU {
         this.specialTable[0x0B] = (i) => { if (this.gpr[(i >> 16) & 0x1F] !== 0n) this.gpr[(i >> 11) & 0x1F] = this.gpr[(i >> 21) & 0x1F]; };
         this.specialTable[0x0C] = (i, pc, ds) => this.raiseException(8, pc, ds);
         this.specialTable[0x0D] = (i, pc, ds) => this.raiseException(9, pc, ds);
-        this.specialTable[0x0E] = () => {};
-        this.specialTable[0x0F] = () => {};
+        this.specialTable[0x0E] = (i, pc) => pc + 4n; // SYNC NOP
+        this.specialTable[0x0F] = (i, pc) => pc + 4n; // SYNC NOP
         this.specialTable[0x10] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.hi; };
         this.specialTable[0x11] = (i) => { this.hi = this.gpr[(i >> 21) & 0x1F]; };
         this.specialTable[0x12] = (i) => { this.gpr[(i >> 11) & 0x1F] = this.lo; };
