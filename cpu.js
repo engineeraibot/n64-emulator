@@ -21,10 +21,10 @@ class CPU {
         this.regimmTable[0x01] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
         this.regimmTable[0x02] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
         this.regimmTable[0x03] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
-        this.regimmTable[0x10] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
-        this.regimmTable[0x11] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { this.branchTarget = pc + 8n; this.branchTaken = true; return pc + 4n; } };
-        this.regimmTable[0x12] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
-        this.regimmTable[0x13] = (i, pc, ds) => { this.gpr[31] = pc + 8n; if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x10] = (i, pc, ds) => { this.gpr[31] = pc + 8n; this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.branchTaken = true; } else { this.branchTarget = pc + 8n; this.branchTaken = true; } return pc + 4n; };
+        this.regimmTable[0x11] = (i, pc, ds) => { this.gpr[31] = pc + 8n; this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.branchTaken = true; } else { this.branchTarget = pc + 8n; this.branchTaken = true; } return pc + 4n; };
+        this.regimmTable[0x12] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0n) { this.gpr[31] = pc + 8n; this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
+        this.regimmTable[0x13] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0n) { this.gpr[31] = pc + 8n; this.branchTarget = pc + 4n + (BigInt.asIntN(16, BigInt(i & 0xFFFF)) << 2n); this.branchTaken = true; return pc + 4n; } else { return pc + 8n; } };
         this.regimmTable[0x08] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
         this.regimmTable[0x09] = (i, pc, ds) => { if (BigInt.asUintN(64, this.gpr[(i >> 21) & 0x1F]) >= BigInt.asUintN(64, BigInt.asIntN(16, BigInt(i & 0xFFFF)))) return this.raiseException(13, pc, ds); };
         this.regimmTable[0x0A] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < BigInt.asIntN(16, BigInt(i & 0xFFFF))) return this.raiseException(13, pc, ds); };
@@ -723,6 +723,10 @@ class CPU {
             let instr = 0;
             try { instr = this.mmu.read32(Number(pc & ~3n)); } catch(e) {}
             console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} Status=0x${this.cp0Registers[12].toString(16)} Cause=0x${this.cp0Registers[13].toString(16)}`);
+            if (code === 13) {
+                console.warn(`Trap Registers: v0=0x${this.gpr[2].toString(16)} a0=0x${this.gpr[4].toString(16)} a1=0x${this.gpr[5].toString(16)} ra=0x${this.gpr[31].toString(16)}`);
+            }
+            console.warn("PC History:", Array.from(this.pcHistory).map(x => x.toString(16)).join(", "));
         }
         const status = this.cp0Registers[12], bev = (status >> 22n) & 1n;
         const vector = bev ? 0xBFC00380n : 0x80000180n;
