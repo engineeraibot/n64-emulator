@@ -713,9 +713,9 @@ class CPU {
                 this.pc = this.cp0Registers[14];
                 this.cp0Registers[12] &= ~2n;
             }
-            return true;
+            return null;
         }
-        return false;
+        return pc + 4n;
     }
 
     raiseException(code, pc, ds) {
