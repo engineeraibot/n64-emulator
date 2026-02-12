@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 2000);
 
     const texture = new THREE.DataTexture(framebuffer, FB_WIDTH, FB_HEIGHT, THREE.RGBAFormat);
-    texture.flipY = true; texture.needsUpdate = true;
+    texture.flipY = false; texture.needsUpdate = true;
     scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.MeshBasicMaterial({ map: texture })));
 
     let lastOrigin = -1, lastWidth = -1, lastType = -1;

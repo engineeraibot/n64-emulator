@@ -153,7 +153,7 @@ class RCP {
             primColor: 0xFFFFFFFF, envColor: 0, fillColor: 0, colorImage: 0, colorImageWidth: 320, colorImageSize: 2,
             textureImage: 0, textureImageWidth: 0, textureImageSize: 2,
             textureScaleS: 1.0, textureScaleT: 1.0, otherModeHi: 0, otherModeLo: 0, currentTile: 0, useTexture: false,
-            geometryMode: 0, isF3DEX2: false
+            geometryMode: 0, isF3DEX2: false, isF3DEX: false
         };
     }
 
@@ -238,11 +238,8 @@ class RCP {
                 case 0x04: this.handleG_VTX(hi, lo); break;
                 case 0xBF: this.handleG_TRI1(hi, lo, this.rspState.isF3DEX2); break;
                 case 0xB1: this.handleG_TRI2(hi, lo, this.rspState.isF3DEX2); break;
-                case 0xBC: case 0xB6: this.handleG_MOVEWORD(hi, lo); break;
+                case 0xDB: case 0xBC: case 0xB6: this.handleG_MOVEWORD(hi, lo); break;
                 case 0xBD: case 0xB7: this.handleG_MOVEMEM(hi, lo); break;
-                case 0xDB: // G_MOVEWORD or G_SETSEGMENT
-                    this.rspState.segments[(hi & 0xFFFF) >> 2 & 0xF] = lo;
-                    break;
                 case 0xFD:
                     this.rspState.textureImage = this.resolvePhysicalAddress(lo);
                     this.rspState.textureImageWidth = (hi & 0xFFF) + 1;
@@ -349,7 +346,11 @@ class RCP {
         if (this.rspState.isF3DEX2) {
             num = (hi >> 12) & 0xFF;
             dest = (hi >> 1) & 0x7F;
-        } else {
+        } else if (((hi >> 16) & 0xFF) > 0) { // F3DEX1
+            this.rspState.isF3DEX = true;
+            num = (hi >> 16) & 0xFF;
+            dest = (hi >> 10) & 0x3F;
+        } else { // F3D
             num = ((hi >> 10) & 0x3F) + 1;
             dest = (hi >> 0) & 0x3FF;
             dest = Math.floor(dest / 16);
@@ -390,7 +391,7 @@ class RCP {
     }
 
     handleG_TRI1(hi, lo, isEX2) {
-        const s = isEX2 ? 2 : 16;
+        const s = (isEX2 || this.rspState.isF3DEX) ? 2 : 16;
         const v1 = this.rspState.vertices[((isEX2 ? hi >> 16 : lo >> 16) & 0xFF) / s];
         const v2 = this.rspState.vertices[((isEX2 ? hi >> 8 : lo >> 8) & 0xFF) / s];
         const v3 = this.rspState.vertices[((isEX2 ? hi : lo) & 0xFF) / s];
@@ -398,7 +399,7 @@ class RCP {
     }
 
     handleG_TRI2(hi, lo, isEX2) {
-        const s = isEX2 ? 2 : 16;
+        const s = (isEX2 || this.rspState.isF3DEX) ? 2 : 16;
         const v1 = this.rspState.vertices[((hi >> 16) & 0xFF) / s];
         const v2 = this.rspState.vertices[((hi >> 8) & 0xFF) / s];
         const v3 = this.rspState.vertices[(hi & 0xFF) / s];
@@ -478,10 +479,10 @@ class RCP {
                         if (this.rspState.otherModeLo & 0x20) rd.setUint16(pz, Math.max(0, Math.min(0xFFFF, z)), false);
                     }
                     const shade = {
-                        r: v1.r * weights.s + v2.r * weights.t + v3.r * weights.u,
-                        g: v1.g * weights.s + v2.g * weights.t + v3.g * weights.u,
-                        b: v1.b * weights.s + v2.b * weights.t + v3.b * weights.u,
-                        a: v1.a * weights.s + v2.a * weights.t + v3.a * weights.u
+                        r: Math.floor(v1.r * weights.s + v2.r * weights.t + v3.r * weights.u),
+                        g: Math.floor(v1.g * weights.s + v2.g * weights.t + v3.g * weights.u),
+                        b: Math.floor(v1.b * weights.s + v2.b * weights.t + v3.b * weights.u),
+                        a: Math.floor(v1.a * weights.s + v2.a * weights.t + v3.a * weights.u)
                     };
                     const s = (v1.s * weights.s + v2.s * weights.t + v3.s * weights.u) * this.rspState.textureScaleS;
                     const t = (v1.t * weights.s + v2.t * weights.t + v3.t * weights.u) * this.rspState.textureScaleT;
@@ -490,9 +491,11 @@ class RCP {
                     if (color.a < 1 && (this.rspState.otherModeLo & 0x4000)) continue;
                     const p = (addr + (y * w + x) * (this.rspState.colorImageSize === 3 ? 4 : 2)) & 0x7FFFFF;
                     if (this.rspState.colorImageSize === 2) {
-                        rd.setUint16(p, (((color.r >> 3) & 0x1F) << 11) | (((color.g >> 3) & 0x1F) << 6) | (((color.b >> 3) & 0x1F) << 1) | (color.a > 127 ? 1 : 0), false);
+                        const r = Math.floor(color.r), g = Math.floor(color.g), b = Math.floor(color.b), a = Math.floor(color.a);
+                        rd.setUint16(p, (((r >> 3) & 0x1F) << 11) | (((g >> 3) & 0x1F) << 6) | (((b >> 3) & 0x1F) << 1) | (a > 127 ? 1 : 0), false);
                     } else {
-                        rd.setUint32(p, (color.r << 24) | (color.g << 16) | (color.b << 8) | color.a, false);
+                        const r = Math.floor(color.r), g = Math.floor(color.g), b = Math.floor(color.b), a = Math.floor(color.a);
+                        rd.setUint32(p, (r << 24) | (g << 16) | (b << 8) | a, false);
                     }
                 }
             }
@@ -527,11 +530,17 @@ class RCP {
         const wrapT = tile.maskT ? (1 << tile.maskT) : 1024;
         ts = Math.abs(ts) % wrapS; tt = Math.abs(tt) % wrapT;
 
-        if (tile.format === 0 && tile.size === 2) { // RGBA 16-bit
-            const p = (tile.tmem * 8 + tt * tile.line * 8 + ts * 2);
-            if (p + 1 >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
-            const v = (this.tmem[p] << 8) | this.tmem[p + 1];
-            return { r: ((v >> 11) & 0x1F) << 3, g: ((v >> 6) & 0x1F) << 3, b: ((v >> 1) & 0x1F) << 3, a: (v & 1) ? 255 : 0 };
+        if (tile.format === 0) { // RGBA
+            if (tile.size === 2) { // 16-bit
+                const p = (tile.tmem * 8 + tt * tile.line * 8 + ts * 2);
+                if (p + 1 >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+                const v = (this.tmem[p] << 8) | this.tmem[p + 1];
+                return { r: ((v >> 11) & 0x1F) << 3, g: ((v >> 6) & 0x1F) << 3, b: ((v >> 1) & 0x1F) << 3, a: (v & 1) ? 255 : 0 };
+            } else if (tile.size === 3) { // 32-bit
+                const p = (tile.tmem * 8 + tt * tile.line * 8 + ts * 4);
+                if (p + 3 >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+                return { r: this.tmem[p], g: this.tmem[p + 1], b: this.tmem[p + 2], a: this.tmem[p + 3] };
+            }
         } else if (tile.format === 2) { // CI
             const p = (tile.tmem * 8 + tt * tile.line * 8 + (tile.size === 1 ? ts : ts >> 1));
             if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
@@ -539,17 +548,31 @@ class RCP {
             const palOff = 2048 + (tile.palette * 16 + idx) * 2;
             const v = (this.tmem[palOff] << 8) | this.tmem[palOff + 1];
             return { r: ((v >> 11) & 0x1F) << 3, g: ((v >> 6) & 0x1F) << 3, b: ((v >> 1) & 0x1F) << 3, a: (v & 1) ? 255 : 0 };
-        } else if (tile.format === 3 && tile.size === 1) { // IA 8-bit
-            const p = (tile.tmem * 8 + tt * tile.line * 8 + ts);
-            if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
-            const v = this.tmem[p];
-            const i = (v >> 4) << 4;
-            return { r: i, g: i, b: i, a: (v & 0xF) << 4 };
+        } else if (tile.format === 3) { // IA
+            if (tile.size === 1) { // 8-bit
+                const p = (tile.tmem * 8 + tt * tile.line * 8 + ts);
+                if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+                const v = this.tmem[p], i = (v >> 4) << 4;
+                return { r: i, g: i, b: i, a: (v & 0xF) << 4 };
+            } else if (tile.size === 0) { // 4-bit
+                const p = (tile.tmem * 8 + tt * tile.line * 8 + (ts >> 1));
+                if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+                const v = (ts & 1) ? (this.tmem[p] & 0xF) : (this.tmem[p] >> 4);
+                const i = (v >> 1) << 5;
+                return { r: i, g: i, b: i, a: (v & 1) ? 255 : 0 };
+            }
         } else if (tile.format === 4) { // I
-            const p = (tile.tmem * 8 + tt * tile.line * 8 + (tile.size === 1 ? ts : ts >> 1));
-            if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
-            const v = (tile.size === 1) ? this.tmem[p] : (ts & 1 ? (this.tmem[p] & 0xF) << 4 : this.tmem[p] & 0xF0);
-            return { r: v, g: v, b: v, a: 255 };
+            if (tile.size === 1) { // 8-bit
+                const p = (tile.tmem * 8 + tt * tile.line * 8 + ts);
+                if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+                const v = this.tmem[p];
+                return { r: v, g: v, b: v, a: 255 };
+            } else if (tile.size === 0) { // 4-bit
+                const p = (tile.tmem * 8 + tt * tile.line * 8 + (ts >> 1));
+                if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
+                const v = (ts & 1) ? (this.tmem[p] & 0xF) << 4 : (this.tmem[p] & 0xF0);
+                return { r: v, g: v, b: v, a: 255 };
+            }
         }
         return { r: 255, g: 255, b: 255, a: 255 };
     }
@@ -580,7 +603,7 @@ class RCP {
             }
         };
         const A = get((hi >> 20) & 0xF, false), B = get((lo >> 28) & 0xF, false), C = get((hi >> 15) & 0x1F, false), D = get((lo >> 15) & 0x7, false);
-        const aA = get((hi >> 12) & 0x7, true), aB = get((lo >> 12) & 0x7, true), aC = get((hi >> 9) & 0x7, true), aD = get((lo >> 9) & 0x7, true);
+        const aA = get((hi >> 12) & 0x7, true), aB = get((lo >> 21) & 0x7, true), aC = get((hi >> 9) & 0x7, true), aD = get((lo >> 12) & 0x7, true);
         return {
             r: Math.max(0, Math.min(255, (A.r - B.r) * (C.r / 255) + D.r)),
             g: Math.max(0, Math.min(255, (A.g - B.g) * (C.g / 255) + D.g)),
@@ -592,7 +615,7 @@ class RCP {
     updateUseTexture(hi, lo) {
         const is = (s) => s === 0 || s === 1;
         const colorA = (hi >> 20) & 0xF, colorB = (lo >> 28) & 0xF, colorC = (hi >> 15) & 0x1F, colorD = (lo >> 15) & 0x7;
-        const alphaA = (hi >> 12) & 0x7, alphaB = (lo >> 12) & 0x7, alphaC = (hi >> 9) & 0x7, alphaD = (lo >> 9) & 0x7;
+        const alphaA = (hi >> 12) & 0x7, alphaB = (lo >> 21) & 0x7, alphaC = (hi >> 9) & 0x7, alphaD = (lo >> 12) & 0x7;
         this.rspState.useTexture = is(colorA) || is(colorB) || is(colorC) || is(colorD) || is(alphaA) || is(alphaB) || is(alphaC) || is(alphaD);
     }
 
@@ -657,11 +680,12 @@ class RCP {
     }
 
     handleG_TEXRECT(hi, lo, addr, flip) {
-        const xh = (hi >> 12) & 0xFFF, yh = hi & 0xFFF, xl = (lo >> 12) & 0xFFF, yl = lo & 0xFFF, t = (lo >> 24) & 0x7;
-        const s = this.mmu.read16(addr + 8);
-        const tt = this.mmu.read16(addr + 10);
-        const dx = (this.mmu.read16(addr + 12) << 16) >> 16;
-        const dy = (this.mmu.read16(addr + 14) << 16) >> 16;
+        const xh = (hi >> 12) & 0xFFF, yh = hi & 0xFFF;
+        const w1hi = this.mmu.read32(addr + 8);
+        const xl = (w1hi >> 12) & 0xFFF, yl = w1hi & 0xFFF, t = (w1hi >> 24) & 0x7;
+        const s = this.mmu.read16(addr + 16), tt = this.mmu.read16(addr + 18);
+        const dx = (this.mmu.read16(addr + 24) << 16) >> 16;
+        const dy = (this.mmu.read16(addr + 26) << 16) >> 16;
         const v1 = { x: xl / 4, y: yl / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: tt };
         const v2 = { x: xh / 4, y: yl / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh - xl) * dx / 4096, t: tt };
         const v3 = { x: xl / 4, y: yh / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: tt + (yh - yl) * dy / 4096 };
