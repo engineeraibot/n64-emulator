@@ -103,6 +103,12 @@ class MMU {
 
     read32(a) {
         const p = this.translateAddress(a);
+        if (p >= 0x04000000 && p <= 0x04800000) {
+            // Only log if it's not VI_CURRENT or SP_STATUS which are polled constantly
+            if (p !== 0x04400010 && p !== 0x04040010 && (this.cpu && this.cpu.instructionCount % 1000 === 0)) {
+                console.log(`MMIO Read: 0x${p.toString(16)} at PC=0x${this.cpu ? this.cpu.pc.toString(16) : '?'}`);
+            }
+        }
 
         if (p < 0x04000000) return this.memory.read32(p & 0x7FFFFF);
 
@@ -122,7 +128,8 @@ class MMU {
         if (p >= 0x04400000 && p <= 0x04400037) {
             if (p === 0x04400010) { // VI_CURRENT
                 const now = this.cpu ? this.cpu.instructionCount : 0;
-                return Math.floor(now / 3000) % (this.viRegisters[6] || 525);
+                const vSync = this.viRegisters[6] & 0x3FF;
+                return (Math.floor(now / 3000) % (vSync || 525)) & ~1; // Even values mostly
             }
             return this.viRegisters[(p - 0x04400000) >> 2];
         }
@@ -153,10 +160,22 @@ class MMU {
         }
 
         // SP Registers
-        if (p >= 0x04040000 && p <= 0x0404001F) return this.spRegisters[(p - 0x04040000) >> 2];
+        if (p >= 0x04040000 && p <= 0x0404001F) {
+            const idx = (p - 0x04040000) >> 2;
+            if (idx === 7) { // SP_SEMAPHORE
+                const v = this.spRegisters[7];
+                this.spRegisters[7] = 1;
+                return v;
+            }
+            return this.spRegisters[idx];
+        }
 
         // DPC Registers
-        if (p >= 0x04100000 && p <= 0x0410001F) return this.dpcRegisters[(p - 0x04100000) >> 2];
+        if (p >= 0x04100000 && p <= 0x0410001F) {
+            const idx = (p - 0x04100000) >> 2;
+            if (idx === 3) return 0x80; // DPC_STATUS: Ready
+            return this.dpcRegisters[idx];
+        }
 
         // AI Registers
         if (p >= 0x04500000 && p <= 0x04500017) {
@@ -210,8 +229,10 @@ class MMU {
                 if (regIdx === 1) this.aiBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + 50000;
             }
         } else if (p >= 0x04040000 && p <= 0x0404001F) {
-            if (this.rcp) this.rcp.handleSpWrite(p, v);
-            else this.spRegisters[(p - 0x04040000) >> 2] = v;
+            const idx = (p - 0x04040000) >> 2;
+            if (idx === 4) { if (this.rcp) this.rcp.handleSpWrite(p, v); }
+            else if (idx === 7) this.spRegisters[7] = 0; // SP_SEMAPHORE write clears it
+            else this.spRegisters[idx] = v;
         } else if (p >= 0x04100000 && p <= 0x0410001F) {
             const idx = (p - 0x04100000) >> 2;
             if (idx === 1) console.log(`MMU: DPC_END Write 0x${v.toString(16)}`);
@@ -358,7 +379,7 @@ class MMU {
             const rd = new Uint8Array(this.memory.rdram);
             const rv = new Uint8Array(this.memory.rom);
             const rs = rv.length;
-            const romOffset = (cartAddr & 0x0FFFFFFF) % rs; // Support mirrors
+            const romOffset = (cartAddr & 0x1FFFFFFF) % rs; // Support mirrors up to 512MB
 
             for (let i = 0; i < len; i++) {
                 if (ra + i >= 0x800000) break;

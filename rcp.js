@@ -19,6 +19,7 @@ class RCP {
     }
 
     handleSpWrite(address, value) {
+        console.log(`SP Write: idx=${(address - 0x04040000) >> 2} val=0x${value.toString(16)}`);
         const regIdx = (address - 0x04040000) >> 2;
         if (regIdx === 2) {
             this.mmu.spRegisters[2] = value;
@@ -35,10 +36,13 @@ class RCP {
             if (value & 0x00000010) { this.mmu.miRegisters[2] |= 0x01; this.mmu.updateInterrupts(); } // Set SP Interrupt
             if (value & 0x00000020) this.mmu.spRegisters[4] &= ~0x00000004; // Clear Single Step
             if (value & 0x00000040) this.mmu.spRegisters[4] |= 0x00000004;  // Set Single Step
-            if (value & 0x00000200) this.mmu.spRegisters[4] &= ~0x00000010; // Clear Sig0
-            if (value & 0x00000400) this.mmu.spRegisters[4] |= 0x00000010; // Set Sig0
-            if (value & 0x00000800) this.mmu.spRegisters[4] &= ~0x00000020; // Clear Sig1
-            if (value & 0x00001000) this.mmu.spRegisters[4] |= 0x00000020; // Set Sig1
+            if (value & 0x00000080) this.mmu.spRegisters[4] &= ~0x00000040; // Clear Intr on Break
+            if (value & 0x00000100) this.mmu.spRegisters[4] |= 0x00000040;  // Set Intr on Break
+
+            for (let i = 0; i < 8; i++) {
+                if (value & (1 << (9 + i*2))) this.mmu.spRegisters[4] &= ~(1 << (4 + i)); // Clear Sig i
+                if (value & (1 << (10 + i*2))) this.mmu.spRegisters[4] |= (1 << (4 + i)); // Set Sig i
+            }
 
             // If Halt bit is cleared, trigger task
             if ((oldStatus & 0x01) && !(this.mmu.spRegisters[4] & 0x01)) {
@@ -99,9 +103,12 @@ class RCP {
                 this.handleG_TEXRECT(hi, lo, addr, cmd === 0x25);
                 consumed = 24;
                 break;
-            case 0x2F: // SETOTHERMODE
-                this.rspState.otherModeLo = lo;
-                this.rspState.otherModeHi = hi & 0xFFFFFF;
+            case 0x2F: // SETOTHERMODE (F3D)
+            case 0xE2: // G_SETOTHERMODE_L (F3DEX2)
+            case 0xE3: // G_SETOTHERMODE_H (F3DEX2)
+                if (cmd === 0xE2) this.rspState.otherModeLo = lo;
+                else if (cmd === 0xE3) this.rspState.otherModeHi = lo;
+                else { this.rspState.otherModeLo = lo; this.rspState.otherModeHi = hi & 0xFFFFFF; }
                 break;
             case 0x32: this.handleG_SETTILESIZE(hi, lo); break;
             case 0x33: this.handleG_LOADBLOCK(hi, lo); break;
@@ -146,7 +153,7 @@ class RCP {
             primColor: 0xFFFFFFFF, envColor: 0, fillColor: 0, colorImage: 0, colorImageWidth: 320, colorImageSize: 2,
             textureImage: 0, textureImageWidth: 0, textureImageSize: 2,
             textureScaleS: 1.0, textureScaleT: 1.0, otherModeHi: 0, otherModeLo: 0, currentTile: 0, useTexture: false,
-            geometryMode: 0
+            geometryMode: 0, isF3DEX2: false
         };
     }
 
@@ -200,7 +207,20 @@ class RCP {
             const cmd = (hi >>> 24) & 0xFF;
 
             switch (cmd) {
-                case 0xDE: // DL
+                case 0x01: // G_VTX (F3DEX2)
+                    this.rspState.isF3DEX2 = true;
+                    this.handleG_VTX(hi, lo);
+                    break;
+                case 0x06: // G_DL (F3D) or G_TRI2 (F3DEX2)
+                    if (!this.rspState.isF3DEX2) {
+                        const nextDl = this.resolveAddress(lo);
+                        if (depth < 16) { stack.push(pc); depth++; pc = nextDl; }
+                    } else {
+                        // handleG_TRI2(hi, lo);
+                    }
+                    break;
+                case 0xDE: // DL (F3DEX2)
+                    this.rspState.isF3DEX2 = true;
                     const nextDl = this.resolveAddress(lo);
                     if ((hi >>> 16) & 0xFF) {
                         if (depth < 16) { stack.push(pc); depth++; pc = nextDl; }
@@ -217,7 +237,10 @@ class RCP {
                 case 0xB1: this.handleG_TRI2(hi, lo, false); break;
                 case 0xBC: case 0xB6: this.handleG_MOVEWORD(hi, lo); break;
                 case 0xBD: case 0xB7: this.handleG_MOVEMEM(hi, lo); break;
-                case 0xDB: this.rspState.segments[(hi >> 2) & 0xF] = lo; break;
+                case 0xDB: // G_MOVEWORD
+                    const type = (hi >> 16) & 0xFF;
+                    if (type === 0x06) this.rspState.segments[(hi >> 2) & 0xF] = lo;
+                    break;
                 case 0xFD:
                     this.rspState.textureImage = this.resolvePhysicalAddress(lo);
                     this.rspState.textureImageWidth = (hi & 0xFFF) + 1;
@@ -320,8 +343,15 @@ class RCP {
     }
 
     handleG_VTX(hi, lo) {
-        const num = (hi >>> 16) & 0xFF;
-        const dest = ((hi >>> 8) & 0xFF) >> 4;
+        let num, dest;
+        if (this.rspState.isF3DEX2) {
+            num = (hi >> 12) & 0xFF;
+            dest = (hi >> 1) & 0x7F;
+        } else {
+            num = ((hi >> 10) & 0x3F) + 1;
+            dest = (hi >> 0) & 0x3FF;
+            dest = Math.floor(dest / 16);
+        }
         const addr = this.resolveAddress(lo);
         const mv = this.rspState.modelviewStack[this.rspState.modelviewStack.length - 1];
         const p = this.rspState.projectionMatrix;
