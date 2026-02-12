@@ -113,6 +113,7 @@ class MMU {
         }
 
         if (p >= 0x1FC00000 && p <= 0x1FC007BF) return 0; // PIF ROM returns 0 to satisfy anti-piracy
+        if (p >= 0x1FC007C0 && p <= 0x1FC007FF) return new DataView(this.pifRam.buffer).getUint32(p - 0x1FC007C0, false);
 
         // DMEM / IMEM
         if (p >= 0x04000000 && p <= 0x04000FFF) return this.spDmemView.getUint32(p - 0x04000000, false);
@@ -163,9 +164,6 @@ class MMU {
             return this.aiRegisters[regIdx];
         }
 
-        // PIF RAM
-        if (p >= 0x1FC007C0 && p <= 0x1FC007FF) return new DataView(this.pifRam.buffer).getUint32(p - 0x1FC007C0, false);
-
         return 0;
     }
 
@@ -175,7 +173,16 @@ class MMU {
         if (p <= 0x7FFFFF) {
             this.memory.write32(p, v);
             if (this.cpu) this.cpu.invalidateCache();
-        } else if (p >= 0x04000000 && p <= 0x04000FFF) {
+            return;
+        }
+
+        if (p >= 0x1FC007C0 && p <= 0x1FC007FF) {
+            new DataView(this.pifRam.buffer).setUint32(p - 0x1FC007C0, v, false);
+            if (p >= 0x1FC007FC) this.handlePifCommand();
+            return;
+        }
+
+        if (p >= 0x04000000 && p <= 0x04000FFF) {
             this.spDmemView.setUint32(p - 0x04000000, v, false);
         } else if (p >= 0x04001000 && p <= 0x04001FFF) {
             this.spImemView.setUint32(p - 0x04001000, v, false);
@@ -286,22 +293,25 @@ class MMU {
 
                 let success = false;
                 if (channel < 4) { // Controllers
-                    if (channel === 0) {
-                        if (cmd === 0x00 || cmd === 0xFF) { // Info / Reset
-                            if (res + 2 < 64) {
-                                this.pifRam[res] = 0x05;
-                                this.pifRam[res + 1] = 0x00;
-                                this.pifRam[res + 2] = 0x01;
-                                success = true;
-                            }
-                        } else if (cmd === 0x01) { // Read
-                            if (res + 3 < 64) {
+                    if (cmd === 0x00 || cmd === 0xFF) { // Info / Reset
+                        if (res + 2 < 64) {
+                            this.pifRam[res] = 0x05;
+                            this.pifRam[res + 1] = 0x00;
+                            this.pifRam[res + 2] = (channel === 0) ? 0x01 : 0x02; // Port 0 connected
+                            success = true;
+                        }
+                    } else if (cmd === 0x01) { // Read
+                        if (res + 3 < 64) {
+                            if (channel === 0) {
                                 this.pifRam[res] = (this.buttons >> 8);
                                 this.pifRam[res + 1] = this.buttons;
                                 this.pifRam[res + 2] = this.stickX;
                                 this.pifRam[res + 3] = this.stickY;
-                                success = true;
+                            } else {
+                                this.pifRam[res] = 0; this.pifRam[res + 1] = 0;
+                                this.pifRam[res + 2] = 0; this.pifRam[res + 3] = 0;
                             }
+                            success = true;
                         }
                     }
                 } else { // EEPROM
@@ -400,6 +410,9 @@ class MMU {
         if (p <= 0x7FFFFF) {
             this.memory.write8(p, v);
             if (this.cpu) this.cpu.invalidateCache();
+        } else if (p >= 0x1FC007C0 && p <= 0x1FC007FF) {
+            this.pifRam[p - 0x1FC007C0] = v;
+            if (p === 0x1FC007FC) this.handlePifCommand();
         }
     }
 
@@ -419,6 +432,10 @@ class MMU {
         if (p <= 0x7FFFFF) {
             this.memory.write16(p, v);
             if (this.cpu) this.cpu.invalidateCache();
+        } else if (p >= 0x1FC007C0 && p <= 0x1FC007FF) {
+            const view = new DataView(this.pifRam.buffer);
+            view.setUint16(p - 0x1FC007C0, v, false);
+            if (p >= 0x1FC007FC) this.handlePifCommand();
         }
     }
 
@@ -447,6 +464,7 @@ class MMU {
 
     translateAddress(a) {
         const addr = (typeof a === 'bigint' ? Number(a & 0xFFFFFFFFn) : a) >>> 0;
-        return (addr >= 0x80000000 && addr <= 0xBFFFFFFF) ? (addr & 0x1FFFFFFF) : addr;
+        if (addr >= 0x80000000) return addr & 0x1FFFFFFF;
+        return addr;
     }
 }

@@ -139,7 +139,12 @@ class RCP {
             vertices: new Array(64).fill(0).map(() => ({ x: 0, y: 0, z: 0, w: 1, r: 0, g: 0, b: 0, a: 0, s: 0, t: 0 })),
             modelviewStack: [this.createIdentityMatrix()],
             projectionMatrix: this.createIdentityMatrix(),
-            tiles: new Array(8).fill(0).map(() => ({ format: 0, size: 0, line: 0, tmem: 0, palette: 0, uls: 0, ult: 0, lrs: 0, lrt: 0 })),
+            tiles: new Array(8).fill(0).map(() => ({
+                format: 0, size: 0, line: 0, tmem: 0, palette: 0,
+                uls: 0, ult: 0, lrs: 0, lrt: 0,
+                maskS: 0, shiftS: 0, mirrorS: 0, wrapS: 0,
+                maskT: 0, shiftT: 0, mirrorT: 0, wrapT: 0
+            })),
             combine: { hi: 0, lo: 0 },
             primColor: 0xFFFFFFFF, envColor: 0, fillColor: 0, colorImage: 0, colorImageWidth: 320, colorImageSize: 2,
             textureImage: 0, textureImageWidth: 0, textureImageSize: 2,
@@ -192,28 +197,51 @@ class RCP {
             cmdCount++;
             const hi = this.mmu.read32(Number(pc));
             const lo = this.mmu.read32(Number(pc + 4));
+            const cmd = (hi >>> 24) & 0xFF;
+            if (cmdCount < 100) console.log(`RSP: CMD=0x${cmd.toString(16).padStart(2, '0')} HI=0x${hi.toString(16).padStart(8, '0')} LO=0x${lo.toString(16).padStart(8, '0')}`);
             pc += 8;
             this.rdpCommandCount++;
-            const cmd = (hi >>> 24) & 0xFF;
 
             switch (cmd) {
-                case 0xDE: // DL
+                case 0x05: this.handleG_TRI1(hi, lo, true); break;
+                case 0x06: // G_DL (F3D) or G_TRI2 (F3DEX2)
+                    if (this.rspState.isF3DEX2) {
+                        this.handleG_TRI2(hi, lo, true);
+                    } else {
+                        this.rspState.isF3DEX2 = false;
+                        const nextDlF3D = this.resolveAddress(lo);
+                        if ((hi >>> 16) & 0xFF) {
+                            if (depth < 16) { stack.push(pc); depth++; pc = nextDlF3D; }
+                        } else pc = nextDlF3D;
+                    }
+                    break;
+                case 0xDE: // G_DL (F3DEX2)
+                    this.rspState.isF3DEX2 = true;
                     const nextDl = this.resolveAddress(lo);
                     if ((hi >>> 16) & 0xFF) {
                         if (depth < 16) { stack.push(pc); depth++; pc = nextDl; }
                     } else pc = nextDl;
                     break;
-                case 0xDF: // ENDDL
+                case 0xB8: // G_ENDDL (F3D)
+                case 0xDF: // G_ENDDL (F3DEX2)
                     if (depth > 0) { depth--; pc = stack.pop(); }
                     else return;
                     break;
-                case 0xDA: this.handleG_MTX(hi, lo); break;
+                case 0x01: // G_MTX (F3D)
+                case 0xDA: // G_MTX (F3DEX2)
+                    this.handleG_MTX(hi, lo);
+                    break;
                 case 0xD8: if (this.rspState.modelviewStack.length > 1) this.rspState.modelviewStack.pop(); break;
                 case 0x04: this.handleG_VTX(hi, lo); break;
                 case 0xBF: this.handleG_TRI1(hi, lo, false); break;
                 case 0xB1: this.handleG_TRI2(hi, lo, false); break;
-                case 0xBC: case 0xB6: this.handleG_MOVEWORD(hi, lo); break;
-                case 0xBD: case 0xB7: this.handleG_MOVEMEM(hi, lo); break;
+                case 0xBC: this.handleG_MOVEWORD(hi, lo); break;
+                case 0xB6: this.rspState.geometryMode &= ~lo; break; // G_CLRGEOMETRYMODE
+                case 0xB7: this.rspState.geometryMode |= lo; break;  // G_SETGEOMETRYMODE
+                case 0x03: // G_MOVEMEM (F3D)
+                case 0xBD: // G_MOVEMEM (F3DEX2)
+                    this.handleG_MOVEMEM(hi, lo);
+                    break;
                 case 0xDB: this.rspState.segments[(hi >> 2) & 0xF] = lo & 0x00FFFFFF; break;
                 case 0xFD:
                     this.rspState.textureImage = this.resolvePhysicalAddress(lo);
@@ -245,19 +273,21 @@ class RCP {
                     this.handleG_TEXRECT(hi, lo, pc - 8, true);
                     pc += 16;
                     break;
-                case 0xE2: case 0xB9: this.rspState.otherModeLo = lo; break;
-                case 0xE3: case 0xBA: this.rspState.otherModeHi = lo; break;
-                case 0xBB:
+                case 0xB9: this.rspState.otherModeLo = lo; break;
+                case 0xBA: this.rspState.otherModeHi = lo; break;
+                case 0xBB: // G_TEXTURE
                     this.rspState.textureScaleS = (lo >>> 16) / 65536.0;
                     this.rspState.textureScaleT = (lo & 0xFFFF) / 65536.0;
                     this.rspState.currentTile = (hi >>> 8) & 0x7;
+                    this.rspState.useTexture = (hi & 1) !== 0;
                     break;
                 case 0xFA: this.rspState.primColor = lo; break;
                 case 0xFB: this.rspState.envColor = lo; break;
                 case 0xF9: this.rspState.blendColor = lo; break;
                 case 0xF8: this.rspState.fogColor = lo; break;
-                case 0xD9: this.rspState.geometryMode |= lo; break;
-                case 0xB8: this.rspState.geometryMode &= ~lo; break;
+                case 0xD9: // G_GEOMETRYMODE (F3DEX2)
+                    this.rspState.geometryMode = (this.rspState.geometryMode & ~(hi & 0xFFFFFF)) | lo;
+                    break;
                 case 0xE7: case 0xE6: case 0xE8: break; // Syncs
                 case 0xE9: // FULLSYNC
                     this.mmu.miRegisters[2] |= 0x20;
@@ -314,8 +344,14 @@ class RCP {
     }
 
     handleG_VTX(hi, lo) {
-        const num = (hi >>> 16) & 0xFF;
-        const dest = ((hi >>> 8) & 0xFF) >> 4;
+        let num, dest;
+        if (this.rspState.isF3DEX2) {
+            num = (hi >>> 16) & 0xFF;
+            dest = (hi >> 1) & 0x7F;
+        } else {
+            num = ((hi >> 10) & 0x3F) + 1;
+            dest = (hi & 0x3FF) / 16;
+        }
         const addr = this.resolveAddress(lo);
         const mv = this.rspState.modelviewStack[this.rspState.modelviewStack.length - 1];
         const p = this.rspState.projectionMatrix;
@@ -384,7 +420,7 @@ class RCP {
     }
 
     handleG_MTX(hi, lo) {
-        const f = hi & 0xFF, m = this.readMatrix(this.resolveAddress(lo));
+        const f = (hi >>> 16) & 0xFF, m = this.readMatrix(this.resolveAddress(lo));
         if (f & 0x01) {
             if (f & 0x02) this.rspState.projectionMatrix = m;
             else this.rspState.projectionMatrix = this.multiplyMatrices(m, this.rspState.projectionMatrix);
@@ -422,6 +458,7 @@ class RCP {
     drawTriangle(v1, v2, v3) {
         const addr = this.rspState.colorImage;
         if (!addr) return;
+        if (this.rdpCommandCount < 100) console.log(`RDP: Drawing Triangle at 0x${addr.toString(16)}`);
         const x1 = v1.x, y1 = v1.y, x2 = v2.x, y2 = v2.y, x3 = v3.x, y3 = v3.y;
         const minX = Math.floor(Math.min(x1, x2, x3)), maxX = Math.ceil(Math.max(x1, x2, x3));
         const minY = Math.floor(Math.min(y1, y2, y3)), maxY = Math.ceil(Math.max(y1, y2, y3));
@@ -471,35 +508,47 @@ class RCP {
     }
 
     sampleTexture(s, t, tileIdx) {
-        if (!this.rspState.useTexture || !this.rspState.textureImage) return { r: 255, g: 255, b: 255, a: 255 };
+        if (!this.rspState.useTexture) return { r: 255, g: 255, b: 255, a: 255 };
         const tile = this.rspState.tiles[tileIdx];
-        let ts = Math.floor(s / 32), tt = Math.floor(t / 32);
-        const wrapS = (this.rspState.otherModeHi >> 14) & 0xF ? (1 << ((this.rspState.otherModeHi >> 14) & 0xF)) : 1024;
-        const wrapT = (this.rspState.otherModeHi >> 4) & 0xF ? (1 << ((this.rspState.otherModeHi >> 4) & 0xF)) : 1024;
-        ts = Math.abs(ts) % wrapS; tt = Math.abs(tt) % wrapT;
+        let ts = s / 32.0, tt = t / 32.0;
+
+        const applyParams = (v, mask, shift, mirror, wrap) => {
+            if (shift > 0 && shift <= 10) v /= (1 << shift);
+            if (shift > 10) v *= (1 << (16 - shift));
+            let iv = Math.floor(v);
+            if (mask > 0) {
+                const size = 1 << mask;
+                if (mirror && (iv & size)) iv = (size - 1) - (iv & (size - 1));
+                else iv = iv & (size - 1);
+            }
+            return iv;
+        };
+
+        const finalS = applyParams(ts, tile.maskS, tile.shiftS, tile.mirrorS, tile.wrapS);
+        const finalT = applyParams(tt, tile.maskT, tile.shiftT, tile.mirrorT, tile.wrapT);
 
         if (tile.format === 0 && tile.size === 2) { // RGBA 16-bit
-            const p = (tile.tmem * 8 + tt * tile.line * 8 + ts * 2);
+            const p = (tile.tmem * 8 + finalT * tile.line * 8 + finalS * 2);
             if (p + 1 >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
             const v = (this.tmem[p] << 8) | this.tmem[p + 1];
             return { r: ((v >> 11) & 0x1F) << 3, g: ((v >> 6) & 0x1F) << 3, b: ((v >> 1) & 0x1F) << 3, a: (v & 1) ? 255 : 0 };
         } else if (tile.format === 2) { // CI
-            const p = (tile.tmem * 8 + tt * tile.line * 8 + (tile.size === 1 ? ts : ts >> 1));
+            const p = (tile.tmem * 8 + finalT * tile.line * 8 + (tile.size === 1 ? finalS : finalS >> 1));
             if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
-            const idx = (tile.size === 1) ? this.tmem[p] : (ts & 1 ? this.tmem[p] & 0xF : this.tmem[p] >> 4);
+            const idx = (tile.size === 1) ? this.tmem[p] : (finalS & 1 ? this.tmem[p] & 0xF : this.tmem[p] >> 4);
             const palOff = 2048 + (tile.palette * 16 + idx) * 2;
             const v = (this.tmem[palOff] << 8) | this.tmem[palOff + 1];
             return { r: ((v >> 11) & 0x1F) << 3, g: ((v >> 6) & 0x1F) << 3, b: ((v >> 1) & 0x1F) << 3, a: (v & 1) ? 255 : 0 };
         } else if (tile.format === 3 && tile.size === 1) { // IA 8-bit
-            const p = (tile.tmem * 8 + tt * tile.line * 8 + ts);
+            const p = (tile.tmem * 8 + finalT * tile.line * 8 + finalS);
             if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
             const v = this.tmem[p];
             const i = (v >> 4) << 4;
             return { r: i, g: i, b: i, a: (v & 0xF) << 4 };
         } else if (tile.format === 4) { // I
-            const p = (tile.tmem * 8 + tt * tile.line * 8 + (tile.size === 1 ? ts : ts >> 1));
+            const p = (tile.tmem * 8 + finalT * tile.line * 8 + (tile.size === 1 ? finalS : finalS >> 1));
             if (p >= 4096) return { r: 255, g: 255, b: 255, a: 255 };
-            const v = (tile.size === 1) ? this.tmem[p] : (ts & 1 ? (this.tmem[p] & 0xF) << 4 : this.tmem[p] & 0xF0);
+            const v = (tile.size === 1) ? this.tmem[p] : (finalS & 1 ? (this.tmem[p] & 0xF) << 4 : this.tmem[p] & 0xF0);
             return { r: v, g: v, b: v, a: 255 };
         }
         return { r: 255, g: 255, b: 255, a: 255 };
@@ -548,11 +597,20 @@ class RCP {
     handleG_SETTILE(hi, lo) {
         const t = (lo >> 24) & 0x7;
         if (t < 8) {
-            this.rspState.tiles[t].format = (hi >> 21) & 0x7;
-            this.rspState.tiles[t].size = (hi >> 19) & 0x3;
-            this.rspState.tiles[t].line = (hi >> 9) & 0x1FF;
-            this.rspState.tiles[t].tmem = hi & 0x1FF;
-            this.rspState.tiles[t].palette = (lo >> 20) & 0xF;
+            const tile = this.rspState.tiles[t];
+            tile.format = (hi >> 21) & 0x7;
+            tile.size = (hi >> 19) & 0x3;
+            tile.line = (hi >> 9) & 0x1FF;
+            tile.tmem = hi & 0x1FF;
+            tile.palette = (lo >> 20) & 0xF;
+            tile.mirrorT = (lo >> 19) & 1;
+            tile.wrapT = (lo >> 18) & 1;
+            tile.maskT = (lo >> 14) & 0xF;
+            tile.shiftT = (lo >> 10) & 0xF;
+            tile.mirrorS = (lo >> 9) & 1;
+            tile.wrapS = (lo >> 8) & 1;
+            tile.maskS = (lo >> 4) & 0xF;
+            tile.shiftS = lo & 0xF;
         }
     }
 
@@ -596,17 +654,29 @@ class RCP {
     }
 
     handleG_MOVEWORD(hi, lo) {
-        if (((hi >> 16) & 0xFF) === 0x06) {
+        const type = (hi >> 16) & 0xFF;
+        if (type === 0x06) { // Segment
             this.rspState.segments[(hi & 0xFFFF) >> 2 & 0xF] = lo & 0xFFFFFF;
+        } else if (type === 0x0E) { // Fog / Clip
+            // NOP for now
         }
     }
 
     handleG_TEXRECT(hi, lo, addr, flip) {
         const xh = (hi >> 12) & 0xFFF, yh = hi & 0xFFF, xl = (lo >> 12) & 0xFFF, yl = lo & 0xFFF, t = (lo >> 24) & 0x7;
-        const s = this.mmu.read16(addr + 8);
-        const tt = this.mmu.read16(addr + 10);
-        const dx = (this.mmu.read16(addr + 12) << 16) >> 16;
-        const dy = (this.mmu.read16(addr + 14) << 16) >> 16;
+        let s, tt, dx, dy;
+        const cmd = (hi >>> 24) & 0xFF;
+        if (cmd === 0xE4 || cmd === 0xE5) { // RSP Fast3D
+            s = this.mmu.read16(addr + 12);
+            tt = this.mmu.read16(addr + 14);
+            dx = (this.mmu.read16(addr + 20) << 16) >> 16;
+            dy = (this.mmu.read16(addr + 22) << 16) >> 16;
+        } else { // RDP
+            s = this.mmu.read16(addr + 8);
+            tt = this.mmu.read16(addr + 10);
+            dx = (this.mmu.read16(addr + 16) << 16) >> 16;
+            dy = (this.mmu.read16(addr + 18) << 16) >> 16;
+        }
         const v1 = { x: xl / 4, y: yl / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: tt };
         const v2 = { x: xh / 4, y: yl / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s + (xh - xl) * dx / 4096, t: tt };
         const v3 = { x: xl / 4, y: yh / 4, z: 0, r: 255, g: 255, b: 255, a: 255, s: s, t: tt + (yh - yl) * dy / 4096 };
