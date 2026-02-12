@@ -104,7 +104,7 @@ class MMU {
     read32(a) {
         const p = this.translateAddress(a);
 
-        if (p <= 0x7FFFFF) return this.memory.read32(p);
+        if (p < 0x04000000) return this.memory.read32(p & 0x7FFFFF);
 
         // Handle ROM mirroring in Domain 1 and 2
         if ((p >= 0x10000000 && p <= 0x1FBFFFFF) || (p >= 0x08000000 && p <= 0x0FFFFFFF)) {
@@ -147,6 +147,11 @@ class MMU {
             return this.siRegisters[(p - 0x04800000) >> 2];
         }
 
+        // RI Registers
+        if (p >= 0x04700000 && p <= 0x0470001F) {
+            return this.riRegisters[(p - 0x04700000) >> 2];
+        }
+
         // SP Registers
         if (p >= 0x04040000 && p <= 0x0404001F) return this.spRegisters[(p - 0x04040000) >> 2];
 
@@ -172,8 +177,8 @@ class MMU {
     write32(a, v) {
         const p = this.translateAddress(a);
 
-        if (p <= 0x7FFFFF) {
-            this.memory.write32(p, v);
+        if (p < 0x04000000) {
+            this.memory.write32(p & 0x7FFFFF, v);
             if (this.cpu) this.cpu.invalidateCache();
         } else if (p >= 0x04000000 && p <= 0x04000FFF) {
             this.spDmemView.setUint32(p - 0x04000000, v, false);
@@ -193,6 +198,8 @@ class MMU {
             this.handleMiWrite(p, v);
         } else if (p >= 0x04800000 && p <= 0x0480001B) {
             this.handleSiWrite(p, v);
+        } else if (p >= 0x04700000 && p <= 0x0470001F) {
+            this.riRegisters[(p - 0x04700000) >> 2] = v;
         } else if (p >= 0x04500000 && p <= 0x04500017) {
             const regIdx = (p - 0x04500000) >> 2;
             if (regIdx === 3) { // AI_STATUS write clears interrupt
@@ -244,8 +251,8 @@ class MMU {
             this.updateInterrupts();
         } else {
             this.piRegisters[idx] = v;
-            if (idx === 2) this.doPiDma(false);
-            if (idx === 3) this.doPiDma(true);
+            if (idx === 2) this.doPiDma(false); // PI_RD_LEN (0x08): RAM -> Cart
+            if (idx === 3) this.doPiDma(true);  // PI_WR_LEN (0x0C): Cart -> RAM
         }
     }
 
@@ -341,30 +348,21 @@ class MMU {
     doPiDma(c2d) {
         if (c2d && this.cpu) this.cpu.invalidateCache();
         const ra = this.piRegisters[0] & 0x007FFFFE;
-        const ca = this.piRegisters[1] & 0x1FFFFFFC;
+        const cartAddr = this.piRegisters[1] & 0x1FFFFFFC;
         const len = ((c2d ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
 
-        console.log(`PI DMA: ${c2d ? 'ROM->RAM' : 'RAM->ROM'} src=0x${ca.toString(16)} dst=0x${ra.toString(16)} len=0x${len.toString(16)}`);
+        console.log(`PI DMA: ${c2d ? 'ROM->RAM' : 'RAM->ROM'} src=0x${cartAddr.toString(16)} dst=0x${ra.toString(16)} len=0x${len.toString(16)}`);
 
-        this.piRegisters[4] |= 0x03;
+        this.piRegisters[4] |= 0x01; // Busy
         if (c2d && this.memory.rom) {
             const rd = new Uint8Array(this.memory.rdram);
             const rv = new Uint8Array(this.memory.rom);
             const rs = rv.length;
-            const actualLen = Math.min(len, 0x1000000);
-            const srcStart = (ca & 0x0FFFFFFF) % rs; // Support mirrors
+            const romOffset = (cartAddr & 0x0FFFFFFF) % rs; // Support mirrors
 
-            if ((ra + actualLen) <= 0x800000 && (srcStart + actualLen) <= rs) {
-                rd.set(rv.subarray(srcStart, srcStart + actualLen), ra);
-                if (ra < 0x200) {
-                   for (let i = 0; i < 16; i++) console.log(`PI DMA to Vector (fast): addr=0x${(ra + i).toString(16)} val=0x${rd[ra+i].toString(16)}`);
-                }
-            } else {
-                for (let i = 0; i < actualLen; i++) {
-                    const val = rv[(srcStart + i) % rs];
-                    if (ra + i < 0x10) console.log(`PI DMA to Vector (slow): addr=0x${(ra + i).toString(16)} val=0x${val.toString(16)}`);
-                    rd[(ra + i) & 0x7FFFFF] = val;
-                }
+            for (let i = 0; i < len; i++) {
+                if (ra + i >= 0x800000) break;
+                rd[ra + i] = rv[(romOffset + i) % rs];
             }
         }
         this.piBusyUntil = (this.cpu ? this.cpu.instructionCount : 0) + len;
@@ -391,7 +389,7 @@ class MMU {
 
     read8(a) {
         const p = this.translateAddress(a);
-        if (p <= 0x7FFFFF) return this.memory.read8(p);
+        if (p < 0x04000000) return this.memory.read8(p & 0x7FFFFF);
         if ((p >= 0x10000000 && p <= 0x1FBFFFFF) || (p >= 0x08000000 && p <= 0x0FFFFFFF)) {
             const romSize = this.memory.rom ? this.memory.rom.byteLength : 0x4000000;
             return this.memory.readRom8((p & 0x0FFFFFFF) % romSize);
@@ -402,15 +400,21 @@ class MMU {
 
     write8(a, v) {
         const p = this.translateAddress(a);
-        if (p <= 0x7FFFFF) {
-            this.memory.write8(p, v);
+        if (p < 0x04000000) {
+            this.memory.write8(p & 0x7FFFFF, v);
             if (this.cpu) this.cpu.invalidateCache();
+        } else {
+            const wordAddr = p & ~3;
+            let val = this.read32(wordAddr);
+            const shift = (3 - (p & 3)) * 8;
+            val = (val & ~(0xFF << shift)) | ((v & 0xFF) << shift);
+            this.write32(wordAddr, val >>> 0);
         }
     }
 
     read16(a) {
         const p = this.translateAddress(a);
-        if (p <= 0x7FFFFF) return this.memory.read16(p);
+        if (p < 0x04000000) return this.memory.read16(p & 0x7FFFFF);
         if ((p >= 0x10000000 && p <= 0x1FBFFFFF) || (p >= 0x08000000 && p <= 0x0FFFFFFF)) {
             const romSize = this.memory.rom ? this.memory.rom.byteLength : 0x4000000;
             return this.memory.readRom16((p & 0x0FFFFFFF) % romSize);
@@ -421,15 +425,21 @@ class MMU {
 
     write16(a, v) {
         const p = this.translateAddress(a);
-        if (p <= 0x7FFFFF) {
-            this.memory.write16(p, v);
+        if (p < 0x04000000) {
+            this.memory.write16(p & 0x7FFFFF, v);
             if (this.cpu) this.cpu.invalidateCache();
+        } else {
+            const wordAddr = p & ~3;
+            let val = this.read32(wordAddr);
+            const shift = (p & 2) ? 0 : 16;
+            val = (val & ~(0xFFFF << shift)) | ((v & 0xFFFF) << shift);
+            this.write32(wordAddr, val >>> 0);
         }
     }
 
     read64(a) {
         const p = this.translateAddress(a);
-        if (p <= 0x7FFFFF) return this.memory.read64(p);
+        if (p < 0x04000000) return this.memory.read64(p & 0x7FFFFF);
         if ((p >= 0x10000000 && p <= 0x1FBFFFFF) || (p >= 0x08000000 && p <= 0x0FFFFFFF)) {
             const romSize = this.memory.rom ? this.memory.rom.byteLength : 0x4000000;
             return this.memory.readRom64((p & 0x0FFFFFFF) % romSize);
@@ -441,8 +451,8 @@ class MMU {
 
     write64(a, v) {
         const p = this.translateAddress(a);
-        if (p <= 0x7FFFFF) {
-            this.memory.write64(p, v);
+        if (p < 0x04000000) {
+            this.memory.write64(p & 0x7FFFFF, v);
             if (this.cpu) this.cpu.invalidateCache();
             return;
         }
