@@ -234,8 +234,8 @@ class CPU {
         this.gpr[16] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0, false))); // s0
 
         const countryCode = romDataView.getUint8(0x3E);
-        const isPal = (countryCode === 0x50 || countryCode === 0x44 || countryCode === 0x46);
-        this.gpr[17] = isPal ? 3n : 1n; // s1 (CIC type)
+        const isPal = (countryCode === 0x50 || countryCode === 0x44 || countryCode === 0x46 || countryCode === 0x4E || countryCode === 0x49 || countryCode === 0x53);
+        this.gpr[17] = isPal ? 3n : 1n; // s1 (CIC type: CIC-6103 for PAL, CIC-6102 for NTSC)
 
         this.gpr[18] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x10, false))); // s2 (checksum)
         this.gpr[11] = BigInt.asIntN(32, BigInt(romDataView.getUint32(0x14, false))); // t3 (checksum)

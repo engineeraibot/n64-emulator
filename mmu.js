@@ -244,8 +244,8 @@ class MMU {
             this.updateInterrupts();
         } else {
             this.piRegisters[idx] = v;
-            if (idx === 2) this.doPiDma(false);
-            if (idx === 3) this.doPiDma(true);
+            if (idx === 2) this.doPiDma(true);  // PI_RD_LEN: ROM -> RAM
+            if (idx === 3) this.doPiDma(false); // PI_WR_LEN: RAM -> ROM
         }
     }
 
@@ -342,7 +342,7 @@ class MMU {
         if (c2d && this.cpu) this.cpu.invalidateCache();
         const ra = this.piRegisters[0] & 0x007FFFFE;
         const ca = this.piRegisters[1] & 0x1FFFFFFC;
-        const len = ((c2d ? this.piRegisters[3] : this.piRegisters[2]) & 0x00FFFFFF) + 1;
+        const len = ((c2d ? this.piRegisters[2] : this.piRegisters[3]) & 0x00FFFFFF) + 1;
 
         console.log(`PI DMA: ${c2d ? 'ROM->RAM' : 'RAM->ROM'} src=0x${ca.toString(16)} dst=0x${ra.toString(16)} len=0x${len.toString(16)}`);
 
@@ -405,6 +405,12 @@ class MMU {
         if (p <= 0x7FFFFF) {
             this.memory.write8(p, v);
             if (this.cpu) this.cpu.invalidateCache();
+        } else {
+            const wordAddr = p & ~3;
+            let val = this.read32(wordAddr);
+            const shift = (3 - (p & 3)) * 8;
+            val = (val & ~(0xFF << shift)) | ((v & 0xFF) << shift);
+            this.write32(wordAddr, val >>> 0);
         }
     }
 
@@ -424,6 +430,12 @@ class MMU {
         if (p <= 0x7FFFFF) {
             this.memory.write16(p, v);
             if (this.cpu) this.cpu.invalidateCache();
+        } else {
+            const wordAddr = p & ~3;
+            let val = this.read32(wordAddr);
+            const shift = (p & 2) ? 0 : 16;
+            val = (val & ~(0xFFFF << shift)) | ((v & 0xFFFF) << shift);
+            this.write32(wordAddr, val >>> 0);
         }
     }
 
