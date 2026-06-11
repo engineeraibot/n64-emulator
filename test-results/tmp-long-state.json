@@ -1,0 +1,254 @@
+[
+  {
+    "sampleMs": 10000,
+    "instr": 446715740,
+    "rsp": 265,
+    "rdp": 55003,
+    "viOrigin": 3734144,
+    "ciOrigin": 3887104,
+    "deterministic": {
+      "origin": 3733504,
+      "width": 320,
+      "type": 2,
+      "height": 240,
+      "source": "vi-line-offset"
+    },
+    "latestVideoTarget": {
+      "origin": 3887104,
+      "width": 320,
+      "type": 2,
+      "size": 2,
+      "sequence": 44
+    },
+    "uniqueHistory": [
+      {
+        "origin": 3887104,
+        "width": 320,
+        "type": 2,
+        "sequence": 44
+      },
+      {
+        "origin": 3733504,
+        "width": 320,
+        "type": 2,
+        "sequence": 43
+      },
+      {
+        "origin": 4040704,
+        "width": 320,
+        "type": 2,
+        "sequence": 42
+      }
+    ]
+  },
+  {
+    "sampleMs": 20000,
+    "instr": 2027717216,
+    "rsp": 1161,
+    "rdp": 122313,
+    "viOrigin": 3887744,
+    "ciOrigin": 4040704,
+    "deterministic": {
+      "origin": 3887104,
+      "width": 320,
+      "type": 2,
+      "height": 240,
+      "source": "vi-line-offset"
+    },
+    "latestVideoTarget": {
+      "origin": 4040704,
+      "width": 320,
+      "type": 2,
+      "size": 2,
+      "sequence": 96
+    },
+    "uniqueHistory": [
+      {
+        "origin": 4040704,
+        "width": 320,
+        "type": 2,
+        "sequence": 96
+      },
+      {
+        "origin": 3887104,
+        "width": 320,
+        "type": 2,
+        "sequence": 95
+      },
+      {
+        "origin": 3733504,
+        "width": 320,
+        "type": 2,
+        "sequence": 94
+      }
+    ]
+  },
+  {
+    "sampleMs": 30000,
+    "instr": 3829979989,
+    "rsp": 2122,
+    "rdp": 122313,
+    "viOrigin": 3887744,
+    "ciOrigin": 4040704,
+    "deterministic": {
+      "origin": 3887104,
+      "width": 320,
+      "type": 2,
+      "height": 240,
+      "source": "vi-line-offset"
+    },
+    "latestVideoTarget": {
+      "origin": 4040704,
+      "width": 320,
+      "type": 2,
+      "size": 2,
+      "sequence": 96
+    },
+    "uniqueHistory": [
+      {
+        "origin": 4040704,
+        "width": 320,
+        "type": 2,
+        "sequence": 96
+      },
+      {
+        "origin": 3887104,
+        "width": 320,
+        "type": 2,
+        "sequence": 95
+      },
+      {
+        "origin": 3733504,
+        "width": 320,
+        "type": 2,
+        "sequence": 94
+      }
+    ]
+  },
+  {
+    "sampleMs": 40000,
+    "instr": 5581612804,
+    "rsp": 3056,
+    "rdp": 122313,
+    "viOrigin": 3887744,
+    "ciOrigin": 4040704,
+    "deterministic": {
+      "origin": 3887104,
+      "width": 320,
+      "type": 2,
+      "height": 240,
+      "source": "vi-line-offset"
+    },
+    "latestVideoTarget": {
+      "origin": 4040704,
+      "width": 320,
+      "type": 2,
+      "size": 2,
+      "sequence": 96
+    },
+    "uniqueHistory": [
+      {
+        "origin": 4040704,
+        "width": 320,
+        "type": 2,
+        "sequence": 96
+      },
+      {
+        "origin": 3887104,
+        "width": 320,
+        "type": 2,
+        "sequence": 95
+      },
+      {
+        "origin": 3733504,
+        "width": 320,
+        "type": 2,
+        "sequence": 94
+      }
+    ]
+  },
+  {
+    "sampleMs": 50000,
+    "instr": 7335127921,
+    "rsp": 3991,
+    "rdp": 122313,
+    "viOrigin": 3887744,
+    "ciOrigin": 4040704,
+    "deterministic": {
+      "origin": 3887104,
+      "width": 320,
+      "type": 2,
+      "height": 240,
+      "source": "vi-line-offset"
+    },
+    "latestVideoTarget": {
+      "origin": 4040704,
+      "width": 320,
+      "type": 2,
+      "size": 2,
+      "sequence": 96
+    },
+    "uniqueHistory": [
+      {
+        "origin": 4040704,
+        "width": 320,
+        "type": 2,
+        "sequence": 96
+      },
+      {
+        "origin": 3887104,
+        "width": 320,
+        "type": 2,
+        "sequence": 95
+      },
+      {
+        "origin": 3733504,
+        "width": 320,
+        "type": 2,
+        "sequence": 94
+      }
+    ]
+  },
+  {
+    "sampleMs": 60000,
+    "instr": 9092412990,
+    "rsp": 4928,
+    "rdp": 122313,
+    "viOrigin": 3887744,
+    "ciOrigin": 4040704,
+    "deterministic": {
+      "origin": 3887104,
+      "width": 320,
+      "type": 2,
+      "height": 240,
+      "source": "vi-line-offset"
+    },
+    "latestVideoTarget": {
+      "origin": 4040704,
+      "width": 320,
+      "type": 2,
+      "size": 2,
+      "sequence": 96
+    },
+    "uniqueHistory": [
+      {
+        "origin": 4040704,
+        "width": 320,
+        "type": 2,
+        "sequence": 96
+      },
+      {
+        "origin": 3887104,
+        "width": 320,
+        "type": 2,
+        "sequence": 95
+      },
+      {
+        "origin": 3733504,
+        "width": 320,
+        "type": 2,
+        "sequence": 94
+      }
+    ]
+  }
+]

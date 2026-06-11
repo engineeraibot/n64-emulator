@@ -1,0 +1,12 @@
+const fs=require('fs');
+let c='';for(const f of ['memory.js','mmu.js','rcp.js','cpu.js'])c+=fs.readFileSync(f,'utf8')+'\n';
+c+='\nmodule.exports={Memory,MMU,RCP,CPU};\n';
+fs.writeFileSync('_concat_mod.js',c);
+const {Memory,MMU,RCP,CPU}=require('./_concat_mod.js');
+const {loadState}=require('./tmp_state');
+global.console.log=(()=>{});
+const rb=fs.readFileSync('Super Mario 64 (Europe) (En,Fr,De).n64');const ab=rb.buffer.slice(rb.byteOffset,rb.byteOffset+rb.byteLength);
+const ram=new Memory(8*1024*1024);const mmu=new MMU(ram);const rcp=new RCP(mmu,new Uint8Array(320*240*4));const cpu=new CPU(mmu,rcp);
+mmu.cpu=cpu;mmu.rcp=rcp;ram.loadRom(ab);cpu.isRunning=true;cpu.performHleBoot();
+loadState(process.env.STATE||'state_advfix1',ram,mmu,cpu,rcp);
+const N=parseInt(process.env.N||'30000000',10);for(let i=0;i<N;i++)cpu.step();

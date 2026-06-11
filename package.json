@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "test": "node --test --experimental-test-isolation=none"
+  },
   "dependencies": {
     "playwright": "^1.58.2"
   }

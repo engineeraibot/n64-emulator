@@ -1,0 +1,11 @@
+const {buildMachine}=require('./tmp_boot');
+const {ram,mmu,rcp,cpu}=buildMachine();
+const hex=a=>Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+const seen=new Map(); let n=0;
+const orig=mmu.doSiDma.bind(mmu);
+mmu.doSiDma=function(toPif){ if(toPif){ n++; const ra=mmu.siRegisters[0]&0x7ffffc; const rd=new Uint8Array(mmu.memory.rdram);
+  const key=hex(rd.slice(ra,ra+12)); seen.set(key,(seen.get(key)||0)+1);} return orig(toPif); };
+for(let s=0;s<42000000;s++) cpu.step();
+console.error('SIwrites=',n,'f3d=',rcp.f3dTaskCount,'ch0Cmds=',mmu.controllerDebug.channel0Cmds,'infoReads=',mmu.controllerDebug.infoReads,'buttonReads=',mmu.controllerDebug.buttonReads);
+console.error('--- blocks NOT starting with 00 00 00 00 (controller queries) ---');
+for(const [k,c] of seen) if(!k.startsWith('00 00 00 00')) console.error(`x${c}  ${k}`);

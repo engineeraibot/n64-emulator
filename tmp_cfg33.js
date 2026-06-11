@@ -1,0 +1,11 @@
+const {buildMachine}=require('./tmp_boot');
+const {loadState}=require('./tmp_state');
+const {ram,mmu,rcp,cpu}=buildMachine();
+loadState('state_t24b',ram,mmu,cpu,rcp);
+const hist={};
+const orig=rcp.combineColor.bind(rcp);
+let calls=0;
+rcp.combineColor=function(shade,tex){calls++;const k=(rcp.rspState.combine.hi>>>0).toString(16)+':'+(rcp.rspState.combine.lo>>>0).toString(16);hist[k]=(hist[k]||0)+1;return orig(shade,tex);};
+for(let i=0;i<3000000;i++)cpu.step();
+const e=Object.entries(hist).sort((a,b)=>b[1]-a[1]).slice(0,6);
+console.log('combineColor calls',calls);for(const[k,v]of e)console.log(k,v);

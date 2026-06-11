@@ -1,0 +1,585 @@
+{
+  "instr": 1104990514,
+  "rsp": 669,
+  "rdp": 122313,
+  "viOrigin": 3887744,
+  "viWidth": 320,
+  "ciOrigin": 4040704,
+  "ciWidth": 320,
+  "recent": [
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 491768881
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 491768881
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 495521213
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 495521213
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 499272034
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 499272034
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 503024180
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 503024180
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 506773780
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 506773780
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 510524374
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 510524374
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 514277991
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 514277991
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 518026209
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 518026209
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 521777026
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 521777026
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 525529238
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 525529238
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 529278600
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 529278600
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 533029529
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 533029529
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 536781670
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 536781670
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 540528410
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 540528410
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 544282021
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 544282021
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 548032875
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 548032875
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 551783740
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 551783740
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 555535688
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 555535688
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 559285356
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 559285356
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 563036181
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 563036181
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 566788328
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 566788328
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 570534397
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 570534397
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 574285372
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 574285372
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 578037503
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 578037503
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 581787143
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 581787143
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 585537437
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 585537437
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 589286905
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 589286905
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 593035496
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 593035496
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 596786234
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 596786234
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 600537066
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 600537066
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 604287942
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 604287942
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 608038717
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 608038717
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 611789476
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 611789476
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 615540328
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 615540328
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 619291161
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 619291161
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 623041993
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 623041993
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 626792876
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 626792876
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 630543503
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3733504,
+      "width": 320,
+      "size": 2,
+      "at": 630543503
+    },
+    {
+      "cmd": "task_end",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 634319022
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 3887104,
+      "width": 320,
+      "size": 2,
+      "at": 634319022
+    },
+    {
+      "cmd": "task_end",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 638037787
+    },
+    {
+      "cmd": "gfx_task",
+      "origin": 4040704,
+      "width": 320,
+      "size": 2,
+      "at": 638037787
+    }
+  ],
+  "top": [
+    {
+      "k": "0x38f800_w320_s2",
+      "count": 64
+    },
+    {
+      "k": "0x3b5000_w320_s2",
+      "count": 64
+    },
+    {
+      "k": "0x3da800_w320_s2",
+      "count": 64
+    }
+  ]
+}

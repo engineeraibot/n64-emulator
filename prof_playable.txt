@@ -1,0 +1,766 @@
+Statistical profiling result from isolate-0x1cc60000-6-v8.log, (32843 ticks, 13 unaccounted, 0 excluded).
+
+ [Shared libraries]:
+   ticks  total  nonlib   name
+  23416   71.3%          /usr/bin/node
+   2751    8.4%          /usr/lib/x86_64-linux-gnu/libc.so.6
+      2    0.0%          [vdso]
+      2    0.0%          /usr/lib/x86_64-linux-gnu/libstdc++.so.6.0.30
+
+ [JavaScript]:
+   ticks  total  nonlib   name
+   1123    3.4%   16.8%  JS: *handleG_LOADBLOCK e.js:3413:22
+    815    2.5%   12.2%  JS: *rasterizeTriangle e.js:2804:22
+    752    2.3%   11.3%  JS: *sampleTexture e.js:2966:18
+    524    1.6%    7.9%  JS: *combineColor e.js:3109:17
+    475    1.4%    7.1%  JS: *step e.js:4179:9
+    215    0.7%    3.2%  JS: *blendPixel e.js:3248:15
+     60    0.2%    0.9%  JS: *clamp255 e.js:923:18
+     47    0.1%    0.7%  JS: *opCOP1 e.js:4508:11
+     45    0.1%    0.7%  JS: *opSPECIAL e.js:4306:14
+     42    0.1%    0.6%  JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     31    0.1%    0.5%  JS: *readInstructionWord e.js:4105:24
+     27    0.1%    0.4%  JS: *opLW e.js:4372:9
+     26    0.1%    0.4%  JS: *opADDIU e.js:4359:12
+     25    0.1%    0.4%  JS: *drawTriangle e.js:2604:17
+     20    0.1%    0.3%  JS: *captureDisplayedFrame e.js:1370:26
+     18    0.1%    0.3%  JS: *opSW e.js:4378:9
+     18    0.1%    0.3%  JS: *handleG_TEXRECT e.js:3486:20
+     16    0.0%    0.2%  JS: *decodeAndExecute e.js:4247:21
+     15    0.0%    0.2%  JS: *opBEQ e.js:4322:10
+     13    0.0%    0.2%  JS: *_cs4 e.js:3168:9
+     12    0.0%    0.2%  JS: *opLUI e.js:4366:10
+     12    0.0%    0.2%  JS: *loadRom e.js:20:12
+     11    0.0%    0.2%  JS: *opANDI e.js:4363:11
+     11    0.0%    0.2%  JS: *handleG_VTX e.js:2327:16
+     11    0.0%    0.2%  JS: *_cs5 e.js:3178:9
+     10    0.0%    0.1%  JS: *write32 e.js:373:12
+     10    0.0%    0.1%  JS: *specialTable.<computed> e.js:3781:35
+     10    0.0%    0.1%  JS: *opLBU e.js:4369:10
+     10    0.0%    0.1%  JS: *_as e.js:3193:8
+      9    0.0%    0.1%  JS: *opLH e.js:4370:9
+      9    0.0%    0.1%  JS: *captureVideoTargetSnapshot e.js:1303:31
+      8    0.0%    0.1%  JS: *specialTable.<computed> e.js:3825:35
+      8    0.0%    0.1%  JS: *specialTable.<computed> e.js:3820:35
+      8    0.0%    0.1%  JS: *opSH e.js:4377:9
+      7    0.0%    0.1%  JS: *translateAddress e.js:894:21
+      7    0.0%    0.1%  JS: *processDisplayList e.js:2099:23
+      7    0.0%    0.1%  JS: *opLWC1 e.js:4484:11
+      7    0.0%    0.1%  JS: *opJAL e.js:4321:10
+      7    0.0%    0.1%  JS: *opBEQL e.js:4254:11
+      7    0.0%    0.1%  JS: *clipTriangleToViewport e.js:2751:27
+      6    0.0%    0.1%  JS: *read32 e.js:283:11
+      6    0.0%    0.1%  JS: *read16 e.js:846:11
+      6    0.0%    0.1%  JS: *opSWC1 e.js:4496:11
+      6    0.0%    0.1%  JS: *opSB e.js:4376:9
+      6    0.0%    0.1%  JS: *opREGIMM e.js:4313:13
+      6    0.0%    0.1%  JS: *handleG_FILLRECT e.js:2563:21
+      5    0.0%    0.1%  JS: ^sampleTexture e.js:2966:18
+      5    0.0%    0.1%  JS: *specialTable.<computed> e.js:3824:35
+      5    0.0%    0.1%  JS: *specialTable.<computed> e.js:3784:35
+      5    0.0%    0.1%  JS: *opBNE e.js:4331:10
+      4    0.0%    0.1%  JS: ^combineColor e.js:3109:17
+      4    0.0%    0.1%  JS: *specialTable.<computed> e.js:3828:35
+      4    0.0%    0.1%  JS: *specialTable.<computed> e.js:3788:35
+      4    0.0%    0.1%  JS: *_setupCombine e.js:3081:18
+      3    0.0%    0.0%  JS: *specialTable.<computed> e.js:3822:35
+      3    0.0%    0.0%  JS: *opORI e.js:4364:10
+      3    0.0%    0.0%  JS: *getFprAddr32 e.js:4478:17
+      3    0.0%    0.0%  JS: *aSaveBuff e.js:1783:14
+      2    0.0%    0.0%  JS: ^rasterizeTriangle e.js:2804:22
+      2    0.0%    0.0%  JS: ^lerpVertex e.js:2788:15
+      2    0.0%    0.0%  JS: ^handleG_MOVEMEM e.js:2490:20
+      2    0.0%    0.0%  JS: ^drawTriangle e.js:2604:17
+      2    0.0%    0.0%  JS: *specialTable.<computed> e.js:3806:35
+      2    0.0%    0.0%  JS: *runAudioTask e.js:1681:17
+      2    0.0%    0.0%  JS: *opLB e.js:4368:9
+      2    0.0%    0.0%  JS: *opBNEL e.js:4265:11
+      2    0.0%    0.0%  JS: *clipPolygonAgainstAxis e.js:2760:27
+      2    0.0%    0.0%  JS: *aMixer e.js:1823:11
+      2    0.0%    0.0%  JS: *aEnvmix e.js:1859:12
+      1    0.0%    0.0%  JS: ^write32 e.js:373:12
+      1    0.0%    0.0%  JS: ^specialTable.<computed> e.js:3788:35
+      1    0.0%    0.0%  JS: ^runAudioTask e.js:1681:17
+      1    0.0%    0.0%  JS: ^read32 e.js:283:11
+      1    0.0%    0.0%  JS: ^read16 e.js:846:11
+      1    0.0%    0.0%  JS: ^processDisplayList e.js:2099:23
+      1    0.0%    0.0%  JS: ^opSB e.js:4376:9
+      1    0.0%    0.0%  JS: ^opLH e.js:4370:9
+      1    0.0%    0.0%  JS: ^opBNEL e.js:4265:11
+      1    0.0%    0.0%  JS: ^intersect e.js:2764:27
+      1    0.0%    0.0%  JS: ^handleG_TEXRECT e.js:3486:20
+      1    0.0%    0.0%  JS: ^clipTriangleToViewport e.js:2751:27
+      1    0.0%    0.0%  JS: ^captureVideoTargetSnapshot e.js:1303:31
+      1    0.0%    0.0%  JS: ^_setupBlend e.js:3226:16
+      1    0.0%    0.0%  JS: ^_otherModeRMW e.js:3330:18
+      1    0.0%    0.0%  JS: *sw e.js:2710:20
+      1    0.0%    0.0%  JS: *specialTable.<computed> e.js:3798:35
+      1    0.0%    0.0%  JS: *regimmTable.<computed> e.js:3705:34
+      1    0.0%    0.0%  JS: *read8 e.js:821:10
+      1    0.0%    0.0%  JS: *read32 e.js:15:11
+      1    0.0%    0.0%  JS: *opSLTIU e.js:4362:12
+      1    0.0%    0.0%  JS: *opLDC1 e.js:4490:11
+      1    0.0%    0.0%  JS: *multiplyMatrices e.js:2268:21
+      1    0.0%    0.0%  JS: *lerp e.js:2789:22
+      1    0.0%    0.0%  JS: *lerp e.js:2733:22
+      1    0.0%    0.0%  JS: *intersect e.js:2764:27
+      1    0.0%    0.0%  JS: *handleG_TRI1 e.js:2469:17
+      1    0.0%    0.0%  JS: *handleG_SETTILESIZE e.js:3403:24
+      1    0.0%    0.0%  JS: *getBarycentricWeights e.js:2931:26
+      1    0.0%    0.0%  JS: *computeLitShade e.js:2401:20
+      1    0.0%    0.0%  JS: *checkInternalEvents e.js:202:24
+      1    0.0%    0.0%  JS: *applyTexAddr e.js:2943:17
+      1    0.0%    0.0%  JS: *adGetS16 e.js:1673:13
+      1    0.0%    0.0%  JS: *aLoadBuff e.js:1772:14
+      1    0.0%    0.0%  JS: *_blSel e.js:3314:11
+
+ [C++]:
+   ticks  total  nonlib   name
+   1891    5.8%   28.3%  __write@@GLIBC_2.2.5
+     27    0.1%    0.4%  pthread_cond_signal@@GLIBC_2.3.2
+     13    0.0%    0.2%  _IO_fwrite@@GLIBC_2.2.5
+     12    0.0%    0.2%  __libc_malloc@@GLIBC_2.2.5
+      9    0.0%    0.1%  __getpid@@GLIBC_2.2.5
+      8    0.0%    0.1%  __pthread_mutex_lock@GLIBC_2.2.5
+      8    0.0%    0.1%  __open@@GLIBC_2.2.5
+      7    0.0%    0.1%  __pthread_rwlock_unlock@GLIBC_2.2.5
+      6    0.0%    0.1%  std::basic_ostream<char, std::char_traits<char> >& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&, char const*, long)@@GLIBCXX_3.4.9
+      6    0.0%    0.1%  __pthread_mutex_unlock@GLIBC_2.2.5
+      5    0.0%    0.1%  __read@@GLIBC_2.2.5
+      5    0.0%    0.1%  __libc_free@@GLIBC_2.2.5
+      4    0.0%    0.1%  __pthread_rwlock_wrlock@GLIBC_2.2.5
+      3    0.0%    0.0%  syscall@@GLIBC_2.2.5
+      3    0.0%    0.0%  std::__detail::_Prime_rehash_policy::_M_next_bkt(unsigned long) const@@GLIBCXX_3.4.18
+      3    0.0%    0.0%  __pthread_mutex_trylock@GLIBC_2.2.5
+      2    0.0%    0.0%  std::ostream::sentry::sentry(std::ostream&)@@GLIBCXX_3.4
+      2    0.0%    0.0%  _IO_default_xsputn@@GLIBC_2.2.5
+      1    0.0%    0.0%  std::ostream::flush()@@GLIBCXX_3.4
+      1    0.0%    0.0%  std::num_put<char, std::ostreambuf_iterator<char, std::char_traits<char> > >::do_put(std::ostreambuf_iterator<char, std::char_traits<char> >, std::ios_base&, char, unsigned long) const@@GLIBCXX_3.4
+      1    0.0%    0.0%  std::num_put<char, std::ostreambuf_iterator<char, std::char_traits<char> > >::do_put(std::ostreambuf_iterator<char, std::char_traits<char> >, std::ios_base&, char, long) const@@GLIBCXX_3.4
+      1    0.0%    0.0%  std::locale::id::_M_id() const@@GLIBCXX_3.4
+      1    0.0%    0.0%  std::_Rb_tree_insert_and_rebalance(bool, std::_Rb_tree_node_base*, std::_Rb_tree_node_base*, std::_Rb_tree_node_base&)@@GLIBCXX_3.4
+      1    0.0%    0.0%  pthread_cond_destroy@@GLIBC_2.3.2
+      1    0.0%    0.0%  operator new(unsigned long)@@GLIBCXX_3.4
+      1    0.0%    0.0%  operator delete[](void*)@@GLIBCXX_3.4
+      1    0.0%    0.0%  operator delete(void*, unsigned long)@@CXXABI_1.3.9
+      1    0.0%    0.0%  operator delete(void*)@@GLIBCXX_3.4
+      1    0.0%    0.0%  isprint@@GLIBC_2.2.5
+      1    0.0%    0.0%  fputc@@GLIBC_2.2.5
+      1    0.0%    0.0%  __mmap@@GLIBC_PRIVATE
+      1    0.0%    0.0%  __lll_lock_wait_private@@GLIBC_PRIVATE
+      1    0.0%    0.0%  __clock_gettime@@GLIBC_PRIVATE
+      1    0.0%    0.0%  _IO_file_xsputn@@GLIBC_2.2.5
+
+ [Summary]:
+   ticks  total  nonlib   name
+   4629   14.1%   69.4%  JavaScript
+   2030    6.2%   30.4%  C++
+    772    2.4%   11.6%  GC
+  26171   79.7%          Shared libraries
+     13    0.0%          Unaccounted
+
+ [C++ entry points]:
+   ticks    cpp   total   name
+   1201   95.5%    3.7%  __write@@GLIBC_2.2.5
+     11    0.9%    0.0%  _IO_fwrite@@GLIBC_2.2.5
+      8    0.6%    0.0%  __open@@GLIBC_2.2.5
+      5    0.4%    0.0%  __read@@GLIBC_2.2.5
+      4    0.3%    0.0%  std::basic_ostream<char, std::char_traits<char> >& std::__ostream_insert<char, std::char_traits<char> >(std::basic_ostream<char, std::char_traits<char> >&, char const*, long)@@GLIBCXX_3.4.9
+      4    0.3%    0.0%  __libc_malloc@@GLIBC_2.2.5
+      3    0.2%    0.0%  syscall@@GLIBC_2.2.5
+      3    0.2%    0.0%  __libc_free@@GLIBC_2.2.5
+      2    0.2%    0.0%  std::ostream::sentry::sentry(std::ostream&)@@GLIBCXX_3.4
+      2    0.2%    0.0%  pthread_cond_signal@@GLIBC_2.3.2
+      2    0.2%    0.0%  __pthread_mutex_unlock@GLIBC_2.2.5
+      1    0.1%    0.0%  std::ostream::flush()@@GLIBCXX_3.4
+      1    0.1%    0.0%  std::num_put<char, std::ostreambuf_iterator<char, std::char_traits<char> > >::do_put(std::ostreambuf_iterator<char, std::char_traits<char> >, std::ios_base&, char, unsigned long) const@@GLIBCXX_3.4
+      1    0.1%    0.0%  std::num_put<char, std::ostreambuf_iterator<char, std::char_traits<char> > >::do_put(std::ostreambuf_iterator<char, std::char_traits<char> >, std::ios_base&, char, long) const@@GLIBCXX_3.4
+      1    0.1%    0.0%  std::locale::id::_M_id() const@@GLIBCXX_3.4
+      1    0.1%    0.0%  std::_Rb_tree_insert_and_rebalance(bool, std::_Rb_tree_node_base*, std::_Rb_tree_node_base*, std::_Rb_tree_node_base&)@@GLIBCXX_3.4
+      1    0.1%    0.0%  operator delete[](void*)@@GLIBCXX_3.4
+      1    0.1%    0.0%  operator delete(void*, unsigned long)@@CXXABI_1.3.9
+      1    0.1%    0.0%  isprint@@GLIBC_2.2.5
+      1    0.1%    0.0%  __pthread_rwlock_wrlock@GLIBC_2.2.5
+      1    0.1%    0.0%  __pthread_mutex_lock@GLIBC_2.2.5
+      1    0.1%    0.0%  __clock_gettime@@GLIBC_PRIVATE
+      1    0.1%    0.0%  _IO_file_xsputn@@GLIBC_2.2.5
+
+ [Bottom up (heavy) profile]:
+  Note: percentage shows a share of a particular caller in the total
+  amount of its parent calls.
+  Callers occupying less than 1.0% are not shown.
+
+   ticks parent  name
+  23416   71.3%  /usr/bin/node
+  19861   84.8%    /usr/bin/node
+   6527   32.9%      JS: *combineColor e.js:3109:17
+   6389   97.9%        JS: *rasterizeTriangle e.js:2804:22
+   5417   84.8%          JS: *drawTriangle e.js:2604:17
+   5216   96.3%            JS: *processDisplayList e.js:2099:23
+    201    3.7%            JS: *handleG_TRI1 e.js:2469:17
+    972   15.2%          JS: ^drawTriangle e.js:2604:17
+    445   45.8%            JS: *handleG_TRI1 e.js:2469:17
+    293   30.1%            JS: *processDisplayList e.js:2099:23
+    226   23.3%            JS: ^handleG_TRI1 e.js:2469:17
+    115    1.8%        JS: *handleG_TEXRECT e.js:3486:20
+    115  100.0%          JS: *processDisplayList e.js:2099:23
+    115  100.0%            JS: ^runRspTask e.js:1606:15
+   3602   18.1%      JS: *sampleTexture e.js:2966:18
+   3409   94.6%        JS: *rasterizeTriangle e.js:2804:22
+   2903   85.2%          JS: *drawTriangle e.js:2604:17
+   2786   96.0%            JS: *processDisplayList e.js:2099:23
+    117    4.0%            JS: *handleG_TRI1 e.js:2469:17
+    493   14.5%          JS: ^drawTriangle e.js:2604:17
+    231   46.9%            JS: *handleG_TRI1 e.js:2469:17
+    143   29.0%            JS: *processDisplayList e.js:2099:23
+    111   22.5%            JS: ^handleG_TRI1 e.js:2469:17
+      8    1.6%            JS: ~handleG_TRI1 e.js:2469:17
+    182    5.1%        JS: *handleG_TEXRECT e.js:3486:20
+    180   98.9%          JS: *processDisplayList e.js:2099:23
+    180  100.0%            JS: ^runRspTask e.js:1606:15
+      2    1.1%          JS: ^processDisplayList e.js:2099:23
+      2  100.0%            JS: ^runRspTask e.js:1606:15
+   3549   17.9%      JS: *blendPixel e.js:3248:15
+   3333   93.9%        JS: *rasterizeTriangle e.js:2804:22
+   2843   85.3%          JS: *drawTriangle e.js:2604:17
+   2750   96.7%            JS: *processDisplayList e.js:2099:23
+     93    3.3%            JS: *handleG_TRI1 e.js:2469:17
+    490   14.7%          JS: ^drawTriangle e.js:2604:17
+    191   39.0%            JS: *handleG_TRI1 e.js:2469:17
+    181   36.9%            JS: *processDisplayList e.js:2099:23
+    118   24.1%            JS: ^handleG_TRI1 e.js:2469:17
+    213    6.0%        JS: *handleG_TEXRECT e.js:3486:20
+    213  100.0%          JS: *processDisplayList e.js:2099:23
+    213  100.0%            JS: ^runRspTask e.js:1606:15
+   3137   15.8%      JS: *rasterizeTriangle e.js:2804:22
+   2650   84.5%        JS: *drawTriangle e.js:2604:17
+   2555   96.4%          JS: *processDisplayList e.js:2099:23
+   2555  100.0%            JS: ^runRspTask e.js:1606:15
+     95    3.6%          JS: *handleG_TRI1 e.js:2469:17
+     95  100.0%            JS: ^processDisplayList e.js:2099:23
+    482   15.4%        JS: ^drawTriangle e.js:2604:17
+    208   43.2%          JS: *handleG_TRI1 e.js:2469:17
+    208  100.0%            JS: ^processDisplayList e.js:2099:23
+    150   31.1%          JS: *processDisplayList e.js:2099:23
+    143   95.3%            JS: ^runRspTask e.js:1606:15
+      7    4.7%            JS: ~runRspTask e.js:1606:15
+    121   25.1%          JS: ^handleG_TRI1 e.js:2469:17
+    121  100.0%            JS: ^processDisplayList e.js:2099:23
+   1505    7.6%      JS: *step e.js:4179:9
+   1504   99.9%        JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+   1504  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+    854    4.3%      JS: *clamp255 e.js:923:18
+    777   91.0%        JS: *combineColor e.js:3109:17
+    580   74.6%          JS: *rasterizeTriangle e.js:2804:22
+    526   90.7%            JS: *drawTriangle e.js:2604:17
+     54    9.3%            JS: ^drawTriangle e.js:2604:17
+    195   25.1%          JS: *handleG_TEXRECT e.js:3486:20
+    195  100.0%            JS: *processDisplayList e.js:2099:23
+     71    8.3%        JS: ^combineColor e.js:3109:17
+     59   83.1%          JS: *rasterizeTriangle e.js:2804:22
+     44   74.6%            JS: ^drawTriangle e.js:2604:17
+     15   25.4%            JS: ~drawTriangle e.js:2604:17
+     12   16.9%          JS: ^rasterizeTriangle e.js:2804:22
+      7   58.3%            JS: ~drawTriangle e.js:2604:17
+      5   41.7%            JS: ^drawTriangle e.js:2604:17
+    221    1.1%      JS: *readInstructionWord e.js:4105:24
+    219   99.1%        JS: *step e.js:4179:9
+    219  100.0%          JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+    219  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+   1093    4.7%    JS: *rasterizeTriangle e.js:2804:22
+    893   81.7%      JS: *drawTriangle e.js:2604:17
+    868   97.2%        JS: *processDisplayList e.js:2099:23
+    868  100.0%          JS: ^runRspTask e.js:1606:15
+    868  100.0%            JS: ^handleSpWrite e.js:1014:18
+     25    2.8%        JS: *handleG_TRI1 e.js:2469:17
+     25  100.0%          JS: ^processDisplayList e.js:2099:23
+     25  100.0%            JS: ^runRspTask e.js:1606:15
+    197   18.0%      JS: ^drawTriangle e.js:2604:17
+     77   39.1%        JS: ^handleG_TRI1 e.js:2469:17
+     77  100.0%          JS: ^processDisplayList e.js:2099:23
+     77  100.0%            JS: ~runRspTask e.js:1606:15
+     61   31.0%        JS: *handleG_TRI1 e.js:2469:17
+     61  100.0%          JS: ^processDisplayList e.js:2099:23
+     32   52.5%            JS: ^runRspTask e.js:1606:15
+     29   47.5%            JS: ~runRspTask e.js:1606:15
+     57   28.9%        JS: *processDisplayList e.js:2099:23
+     53   93.0%          JS: ^runRspTask e.js:1606:15
+     53  100.0%            JS: ^handleSpWrite e.js:1014:18
+      4    7.0%          JS: ~runRspTask e.js:1606:15
+      4  100.0%            JS: ^handleSpWrite e.js:1014:18
+      2    1.0%        JS: ~handleG_TRI1 e.js:2469:17
+      2  100.0%          JS: ^processDisplayList e.js:2099:23
+      2  100.0%            JS: ~runRspTask e.js:1606:15
+    418    1.8%    JS: *sampleTexture e.js:2966:18
+    404   96.7%      JS: *rasterizeTriangle e.js:2804:22
+    344   85.1%        JS: *drawTriangle e.js:2604:17
+    328   95.3%          JS: *processDisplayList e.js:2099:23
+    328  100.0%            JS: ^runRspTask e.js:1606:15
+     16    4.7%          JS: *handleG_TRI1 e.js:2469:17
+     16  100.0%            JS: ^processDisplayList e.js:2099:23
+     58   14.4%        JS: ^drawTriangle e.js:2604:17
+     32   55.2%          JS: *handleG_TRI1 e.js:2469:17
+     32  100.0%            JS: ^processDisplayList e.js:2099:23
+     15   25.9%          JS: ^handleG_TRI1 e.js:2469:17
+     15  100.0%            JS: ^processDisplayList e.js:2099:23
+     11   19.0%          JS: *processDisplayList e.js:2099:23
+     11  100.0%            JS: ^runRspTask e.js:1606:15
+     12    2.9%      JS: *handleG_TEXRECT e.js:3486:20
+     12  100.0%        JS: *processDisplayList e.js:2099:23
+     12  100.0%          JS: ^runRspTask e.js:1606:15
+     12  100.0%            JS: ^handleSpWrite e.js:1014:18
+    361    1.5%    JS: *step e.js:4179:9
+    360   99.7%      JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+    360  100.0%        JS: ~<anonymous> node:internal/main/run_main_module:1:1
+
+   2751    8.4%  /usr/lib/x86_64-linux-gnu/libc.so.6
+   1497   54.4%    /usr/bin/node
+    352   23.5%      /usr/bin/node
+    109   31.0%        JS: *step e.js:4179:9
+    107   98.2%          JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+    107  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+      2    1.8%          JS: ^<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      2  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     42   11.9%        JS: *handleG_LOADBLOCK e.js:3413:22
+     41   97.6%          JS: *processDisplayList e.js:2099:23
+     41  100.0%            JS: ^runRspTask e.js:1606:15
+      1    2.4%          JS: ^processDisplayList e.js:2099:23
+      1  100.0%            JS: ~runRspTask e.js:1606:15
+     33    9.4%        JS: *rasterizeTriangle e.js:2804:22
+     25   75.8%          JS: ^drawTriangle e.js:2604:17
+     15   60.0%            JS: ^handleG_TRI1 e.js:2469:17
+      9   36.0%            JS: *processDisplayList e.js:2099:23
+      1    4.0%            JS: *handleG_TRI1 e.js:2469:17
+      8   24.2%          JS: *drawTriangle e.js:2604:17
+      8  100.0%            JS: *processDisplayList e.js:2099:23
+     26    7.4%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     26  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     17    4.8%        JS: *readInstructionWord e.js:4105:24
+     15   88.2%          JS: *step e.js:4179:9
+     15  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      2   11.8%          JS: ^step e.js:4179:9
+      2  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     16    4.5%        JS: ^sampleTexture e.js:2966:18
+     16  100.0%          JS: ^rasterizeTriangle e.js:2804:22
+      9   56.3%            JS: ~drawTriangle e.js:2604:17
+      7   43.8%            JS: ^drawTriangle e.js:2604:17
+     14    4.0%        JS: ^rasterizeTriangle e.js:2804:22
+     10   71.4%          JS: ^drawTriangle e.js:2604:17
+     10  100.0%            JS: ~handleG_TRI1 e.js:2469:17
+      4   28.6%          JS: ~drawTriangle e.js:2604:17
+      4  100.0%            JS: ~handleG_TRI1 e.js:2469:17
+     12    3.4%        JS: ^drawTriangle e.js:2604:17
+      9   75.0%          JS: ^handleG_TRI1 e.js:2469:17
+      9  100.0%            JS: ^processDisplayList e.js:2099:23
+      3   25.0%          JS: *handleG_TRI1 e.js:2469:17
+      3  100.0%            JS: ^processDisplayList e.js:2099:23
+     12    3.4%        JS: *emitAudioBuffer e.js:485:20
+     12  100.0%          JS: *write32 e.js:373:12
+     12  100.0%            JS: *opSW e.js:4378:9
+      9    2.6%        JS: *sampleTexture e.js:2966:18
+      4   44.4%          JS: *rasterizeTriangle e.js:2804:22
+      4  100.0%            JS: ^drawTriangle e.js:2604:17
+      3   33.3%          JS: ^rasterizeTriangle e.js:2804:22
+      3  100.0%            JS: ^drawTriangle e.js:2604:17
+      1   11.1%          JS: ^handleG_TEXRECT e.js:3486:20
+      1  100.0%            JS: ^processDisplayList e.js:2099:23
+      1   11.1%          JS: *handleG_TEXRECT e.js:3486:20
+      1  100.0%            JS: *processDisplayList e.js:2099:23
+      8    2.3%        JS: ~undestroy node:internal/streams/destroy:173:19
+      8  100.0%          JS: ~initSocketHandle node:net:318:26
+      8  100.0%            JS: ~Socket node:net:362:16
+      6    1.7%        JS: ^captureVideoTargetSnapshot e.js:1303:31
+      6  100.0%          JS: ~commitVideoTargetCollection e.js:1239:32
+      6  100.0%            JS: ~runRspTask e.js:1606:15
+      6    1.7%        JS: *read8 e.js:821:10
+      6  100.0%          JS: ^handleG_LOADBLOCK e.js:3413:22
+      6  100.0%            JS: ^processDisplayList e.js:2099:23
+      5    1.4%        JS: ~writeOrBuffer node:internal/streams/writable:548:23
+      5  100.0%          JS: ~_write node:internal/streams/writable:453:16
+      5  100.0%            JS: ~Writable.write node:internal/streams/writable:504:36
+      5    1.4%        JS: ^loadRom e.js:20:12
+      5  100.0%          JS: ~buildMachine /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_boot.js:2:22
+      5  100.0%            JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      4    1.1%        JS: ~initRspState e.js:1189:17
+      4  100.0%          JS: ~runRspTask e.js:1606:15
+      4  100.0%            JS: ^handleSpWrite e.js:1014:18
+      4    1.1%        JS: ~Socket node:net:362:16
+      4  100.0%          /usr/bin/node
+      4  100.0%            JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      4    1.1%        JS: ^processDisplayList e.js:2099:23
+      4  100.0%          JS: ~runRspTask e.js:1606:15
+      4  100.0%            JS: ^handleSpWrite e.js:1014:18
+      4    1.1%        JS: ^opCOP1 e.js:4508:11
+      4  100.0%          JS: *step e.js:4179:9
+      4  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      4    1.1%        JS: ^captureDisplayedFrame e.js:1370:26
+      4  100.0%          JS: ^checkInternalEvents e.js:202:24
+      4  100.0%            JS: ~tryFastForwardIdleLoop e.js:4133:27
+     84    5.6%      JS: *step e.js:4179:9
+     74   88.1%        JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     74  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     10   11.9%        JS: ^<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     10  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     69    4.6%      JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     46    3.1%      JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     46  100.0%        JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     37    2.5%      JS: ~<anonymous> node:net:1:1
+     37  100.0%        JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     37  100.0%          JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     37  100.0%            /usr/bin/node
+     27    1.8%      JS: ^decodeAndExecute e.js:4247:21
+     27  100.0%        JS: ^step e.js:4179:9
+     25   92.6%          JS: ^<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     25  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+      2    7.4%          JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      2  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     23    1.5%      JS: ~loadRom e.js:20:12
+     23  100.0%        JS: ~buildMachine /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_boot.js:2:22
+     23  100.0%          JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     23  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     21    1.4%      JS: ~runRspTask e.js:1606:15
+     21  100.0%        JS: ^handleSpWrite e.js:1014:18
+     21  100.0%          JS: ^write32 e.js:373:12
+     21  100.0%            JS: *opSW e.js:4378:9
+     21    1.4%      JS: ~<anonymous> node:internal/streams/writable:1:1
+     21  100.0%        JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     21  100.0%          JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     21  100.0%            JS: ~<anonymous> node:internal/streams/duplex:1:1
+     19    1.3%      JS: ~step e.js:4179:9
+     17   89.5%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     17  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+      2   10.5%        JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      2  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     17    1.1%      JS: ~runInContext node:vm:290:22
+     17  100.0%        JS: ~buildMachine /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_boot.js:2:22
+     17  100.0%          JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     17  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     16    1.1%      JS: ~doSiDma e.js:802:12
+     14   87.5%        JS: ^handleSiWrite e.js:520:18
+     14  100.0%          JS: *write32 e.js:373:12
+     14  100.0%            JS: *opSW e.js:4378:9
+      2   12.5%        JS: ~handleSiWrite e.js:520:18
+      2  100.0%          JS: ^write32 e.js:373:12
+      2  100.0%            JS: *opSW e.js:4378:9
+     16    1.1%      JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_state.js:1:1
+     16  100.0%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     16  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+    303   11.0%    JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+    301   99.3%      JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     75   24.9%        JS: ~<anonymous> node:internal/streams/readable:1:1
+     75  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     75  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     59   19.6%        JS: ~<anonymous> node:net:1:1
+     59  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     59  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     43   14.3%        JS: ~<anonymous> node:internal/streams/operators:1:1
+     43  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     43  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     36   12.0%        JS: ~<anonymous> node:stream:1:1
+     36  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     36  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     25    8.3%        JS: ~<anonymous> node:internal/streams/pipeline:1:1
+     25  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     25  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     21    7.0%        JS: ~<anonymous> node:internal/streams/duplex:1:1
+     21  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     21  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     21    7.0%        JS: ~<anonymous> node:internal/streams/compose:1:1
+     21  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     21  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     19    6.3%        JS: ~<anonymous> node:internal/perf/observe:1:1
+     19  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     19  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+
+   1891    5.8%  __write@@GLIBC_2.2.5
+   1062   56.2%    /usr/bin/node
+    250   23.5%      /usr/bin/node
+     80   32.0%        JS: *step e.js:4179:9
+     79   98.8%          JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     79  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+      1    1.3%          JS: ^<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      1  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     47   18.8%        JS: *rasterizeTriangle e.js:2804:22
+     33   70.2%          JS: ^drawTriangle e.js:2604:17
+     18   54.5%            JS: ^handleG_TRI1 e.js:2469:17
+      8   24.2%            JS: *processDisplayList e.js:2099:23
+      5   15.2%            JS: *handleG_TRI1 e.js:2469:17
+      2    6.1%            JS: ~handleG_TRI1 e.js:2469:17
+     14   29.8%          JS: *drawTriangle e.js:2604:17
+     14  100.0%            JS: *processDisplayList e.js:2099:23
+     16    6.4%        JS: *sampleTexture e.js:2966:18
+      8   50.0%          JS: *rasterizeTriangle e.js:2804:22
+      8  100.0%            JS: ^drawTriangle e.js:2604:17
+      4   25.0%          JS: *handleG_TEXRECT e.js:3486:20
+      4  100.0%            JS: *processDisplayList e.js:2099:23
+      2   12.5%          JS: ^rasterizeTriangle e.js:2804:22
+      2  100.0%            JS: ^drawTriangle e.js:2604:17
+      2   12.5%          JS: ^handleG_TEXRECT e.js:3486:20
+      2  100.0%            JS: ^processDisplayList e.js:2099:23
+     13    5.2%        JS: ^rasterizeTriangle e.js:2804:22
+      8   61.5%          JS: ^drawTriangle e.js:2604:17
+      4   50.0%            JS: ~handleG_TRI1 e.js:2469:17
+      4   50.0%            JS: ^handleG_TRI1 e.js:2469:17
+      5   38.5%          JS: ~drawTriangle e.js:2604:17
+      5  100.0%            JS: ~handleG_TRI1 e.js:2469:17
+     13    5.2%        JS: *handleG_LOADBLOCK e.js:3413:22
+      9   69.2%          JS: *processDisplayList e.js:2099:23
+      9  100.0%            JS: ^runRspTask e.js:1606:15
+      4   30.8%          JS: ^processDisplayList e.js:2099:23
+      4  100.0%            JS: ~runRspTask e.js:1606:15
+     11    4.4%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     11  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     11    4.4%        JS: ^drawTriangle e.js:2604:17
+      8   72.7%          JS: ^handleG_TRI1 e.js:2469:17
+      8  100.0%            JS: ^processDisplayList e.js:2099:23
+      3   27.3%          JS: *handleG_TRI1 e.js:2469:17
+      3  100.0%            JS: ^processDisplayList e.js:2099:23
+     10    4.0%        JS: *readInstructionWord e.js:4105:24
+      9   90.0%          JS: *step e.js:4179:9
+      9  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      1   10.0%          JS: ^step e.js:4179:9
+      1  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      9    3.6%        JS: ^sampleTexture e.js:2966:18
+      9  100.0%          JS: ^rasterizeTriangle e.js:2804:22
+      6   66.7%            JS: ^drawTriangle e.js:2604:17
+      3   33.3%            JS: ~drawTriangle e.js:2604:17
+      4    1.6%        JS: ~undestroy node:internal/streams/destroy:173:19
+      4  100.0%          JS: ~initSocketHandle node:net:318:26
+      4  100.0%            JS: ~Socket node:net:362:16
+      3    1.2%        JS: ^opCOP1 e.js:4508:11
+      3  100.0%          JS: *step e.js:4179:9
+      3  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      3    1.2%        JS: *read8 e.js:821:10
+      3  100.0%          JS: ^handleG_LOADBLOCK e.js:3413:22
+      3  100.0%            JS: ^processDisplayList e.js:2099:23
+     52    4.9%      JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     36    3.4%      JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     36  100.0%        JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     30    2.8%      JS: *step e.js:4179:9
+     25   83.3%        JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     25  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+      5   16.7%        JS: ^<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      5  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     29    2.7%      JS: ^decodeAndExecute e.js:4247:21
+     29  100.0%        JS: ^step e.js:4179:9
+     26   89.7%          JS: ^<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     26  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+      3   10.3%          JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      3  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     22    2.1%      JS: ~<anonymous> node:net:1:1
+     22  100.0%        JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     22  100.0%          JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     22  100.0%            /usr/bin/node
+     18    1.7%      JS: ~loadRom e.js:20:12
+     18  100.0%        JS: ~buildMachine /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_boot.js:2:22
+     18  100.0%          JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     18  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     17    1.6%      JS: ~step e.js:4179:9
+     14   82.4%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     14  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+      3   17.6%        JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      3  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     17    1.6%      JS: ~rasterizeTriangle e.js:2804:22
+     17  100.0%        JS: ~drawTriangle e.js:2604:17
+     17  100.0%          JS: ~handleG_TRI1 e.js:2469:17
+     17  100.0%            JS: ^processDisplayList e.js:2099:23
+     16    1.5%      JS: ^processDisplayList e.js:2099:23
+     16  100.0%        JS: ~runRspTask e.js:1606:15
+     16  100.0%          JS: ^handleSpWrite e.js:1014:18
+     16  100.0%            JS: ^write32 e.js:373:12
+     15    1.4%      JS: *opSPECIAL e.js:4306:14
+     10   66.7%        JS: *decodeAndExecute e.js:4247:21
+      9   90.0%          JS: ^step e.js:4179:9
+      9  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      1   10.0%          JS: *step e.js:4179:9
+      1  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      5   33.3%        JS: *step e.js:4179:9
+      5  100.0%          JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      5  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     13    1.2%      JS: ^runAudioTask e.js:1681:17
+     11   84.6%        JS: ~runRspTask e.js:1606:15
+     11  100.0%          JS: ^handleSpWrite e.js:1014:18
+     11  100.0%            JS: ^write32 e.js:373:12
+      2   15.4%        JS: ^runRspTask e.js:1606:15
+      2  100.0%          JS: ^handleSpWrite e.js:1014:18
+      2  100.0%            JS: *write32 e.js:373:12
+     12    1.1%      JS: ~runRspTask e.js:1606:15
+     12  100.0%        JS: ^handleSpWrite e.js:1014:18
+     12  100.0%          JS: ^write32 e.js:373:12
+     12  100.0%            JS: *opSW e.js:4378:9
+     12    1.1%      JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_state.js:1:1
+     12  100.0%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     12  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     11    1.0%      JS: ~specialTable.<computed> e.js:3825:35
+     11  100.0%        JS: ~opSPECIAL e.js:4306:14
+     11  100.0%          JS: ^decodeAndExecute e.js:4247:21
+     11  100.0%            JS: ^step e.js:4179:9
+     11    1.0%      JS: ~opLD e.js:4374:9
+     11  100.0%        JS: *decodeAndExecute e.js:4247:21
+     11  100.0%          JS: ^step e.js:4179:9
+     11  100.0%            JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     11    1.0%      JS: ~buildMachine /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_boot.js:2:22
+     11  100.0%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     11  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     11    1.0%      JS: ~aEnvmix e.js:1859:12
+     11  100.0%        JS: ^runAudioTask e.js:1681:17
+     11  100.0%          JS: ~runRspTask e.js:1606:15
+     11  100.0%            JS: ^handleSpWrite e.js:1014:18
+    128    6.8%    JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+    124   96.9%      JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     22   17.7%        JS: ~<anonymous> node:internal/streams/duplex:1:1
+     22  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     22  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     21   16.9%        JS: ~<anonymous> node:stream:1:1
+     21  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     21  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     17   13.7%        JS: ~<anonymous> node:internal/streams/readable:1:1
+     17  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     17  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     17   13.7%        /usr/bin/node
+     17  100.0%          JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+     17  100.0%            JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     15   12.1%        JS: ~<anonymous> node:net:1:1
+     15  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     15  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+     15   12.1%        JS: ~<anonymous> node:internal/streams/operators:1:1
+     15  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+     15  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+      8    6.5%        JS: ~<anonymous> node:internal/streams/pipeline:1:1
+      8  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+      8  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+      5    4.0%        JS: ~<anonymous> node:internal/streams/compose:1:1
+      5  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+      5  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+      4    3.2%        JS: ~<anonymous> node:internal/perf/observe:1:1
+      4  100.0%          JS: ^compileForInternalLoader node:internal/bootstrap/realm:385:27
+      4  100.0%            JS: ^requireBuiltin node:internal/bootstrap/realm:422:24
+      4    3.1%      JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_boot.js:1:1
+      4  100.0%        JS: ~<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+      4  100.0%          JS: ~<anonymous> node:internal/main/run_main_module:1:1
+
+   1123    3.4%  JS: *handleG_LOADBLOCK e.js:3413:22
+   1002   89.2%    JS: *processDisplayList e.js:2099:23
+    987   98.5%      JS: ^runRspTask e.js:1606:15
+    987  100.0%        JS: ^handleSpWrite e.js:1014:18
+    987  100.0%          JS: *write32 e.js:373:12
+    987  100.0%            JS: *opSW e.js:4378:9
+     15    1.5%      JS: ~runRspTask e.js:1606:15
+     15  100.0%        JS: ^handleSpWrite e.js:1014:18
+     15  100.0%          JS: *write32 e.js:373:12
+     15  100.0%            JS: *opSW e.js:4378:9
+    121   10.8%    JS: ^processDisplayList e.js:2099:23
+     65   53.7%      JS: ^runRspTask e.js:1606:15
+     65  100.0%        JS: ^handleSpWrite e.js:1014:18
+     65  100.0%          JS: *write32 e.js:373:12
+     65  100.0%            JS: *opSW e.js:4378:9
+     56   46.3%      JS: ~runRspTask e.js:1606:15
+     56  100.0%        JS: ^handleSpWrite e.js:1014:18
+     46   82.1%          JS: ^write32 e.js:373:12
+     46  100.0%            JS: *opSW e.js:4378:9
+     10   17.9%          JS: *write32 e.js:373:12
+     10  100.0%            JS: *opSW e.js:4378:9
+
+    815    2.5%  JS: *rasterizeTriangle e.js:2804:22
+    664   81.5%    JS: *drawTriangle e.js:2604:17
+    642   96.7%      JS: *processDisplayList e.js:2099:23
+    642  100.0%        JS: ^runRspTask e.js:1606:15
+    642  100.0%          JS: ^handleSpWrite e.js:1014:18
+    642  100.0%            JS: *write32 e.js:373:12
+     22    3.3%      JS: *handleG_TRI1 e.js:2469:17
+     22  100.0%        JS: ^processDisplayList e.js:2099:23
+     22  100.0%          JS: ^runRspTask e.js:1606:15
+     22  100.0%            JS: ^handleSpWrite e.js:1014:18
+    146   17.9%    JS: ^drawTriangle e.js:2604:17
+     55   37.7%      JS: *handleG_TRI1 e.js:2469:17
+     55  100.0%        JS: ^processDisplayList e.js:2099:23
+     30   54.5%          JS: ~runRspTask e.js:1606:15
+     30  100.0%            JS: ^handleSpWrite e.js:1014:18
+     25   45.5%          JS: ^runRspTask e.js:1606:15
+     25  100.0%            JS: ^handleSpWrite e.js:1014:18
+     51   34.9%      JS: ^handleG_TRI1 e.js:2469:17
+     51  100.0%        JS: ^processDisplayList e.js:2099:23
+     51  100.0%          JS: ~runRspTask e.js:1606:15
+     51  100.0%            JS: ^handleSpWrite e.js:1014:18
+     39   26.7%      JS: *processDisplayList e.js:2099:23
+     33   84.6%        JS: ^runRspTask e.js:1606:15
+     33  100.0%          JS: ^handleSpWrite e.js:1014:18
+     33  100.0%            JS: *write32 e.js:373:12
+      6   15.4%        JS: ~runRspTask e.js:1606:15
+      6  100.0%          JS: ^handleSpWrite e.js:1014:18
+      6  100.0%            JS: *write32 e.js:373:12
+
+    752    2.3%  JS: *sampleTexture e.js:2966:18
+    706   93.9%    JS: *rasterizeTriangle e.js:2804:22
+    601   85.1%      JS: *drawTriangle e.js:2604:17
+    579   96.3%        JS: *processDisplayList e.js:2099:23
+    579  100.0%          JS: ^runRspTask e.js:1606:15
+    579  100.0%            JS: ^handleSpWrite e.js:1014:18
+     22    3.7%        JS: *handleG_TRI1 e.js:2469:17
+     22  100.0%          JS: ^processDisplayList e.js:2099:23
+     22  100.0%            JS: ^runRspTask e.js:1606:15
+    103   14.6%      JS: ^drawTriangle e.js:2604:17
+     47   45.6%        JS: *handleG_TRI1 e.js:2469:17
+     47  100.0%          JS: ^processDisplayList e.js:2099:23
+     31   66.0%            JS: ^runRspTask e.js:1606:15
+     16   34.0%            JS: ~runRspTask e.js:1606:15
+     39   37.9%        JS: *processDisplayList e.js:2099:23
+     37   94.9%          JS: ^runRspTask e.js:1606:15
+     37  100.0%            JS: ^handleSpWrite e.js:1014:18
+      2    5.1%          JS: ~runRspTask e.js:1606:15
+      2  100.0%            JS: ^handleSpWrite e.js:1014:18
+     17   16.5%        JS: ^handleG_TRI1 e.js:2469:17
+     17  100.0%          JS: ^processDisplayList e.js:2099:23
+     17  100.0%            JS: ~runRspTask e.js:1606:15
+     34    4.5%    JS: *handleG_TEXRECT e.js:3486:20
+     34  100.0%      JS: *processDisplayList e.js:2099:23
+     34  100.0%        JS: ^runRspTask e.js:1606:15
+     34  100.0%          JS: ^handleSpWrite e.js:1014:18
+     34  100.0%            JS: *write32 e.js:373:12
+      9    1.2%    JS: *drawTriangle e.js:2604:17
+      9  100.0%      JS: *processDisplayList e.js:2099:23
+      9  100.0%        JS: ^runRspTask e.js:1606:15
+      9  100.0%          JS: ^handleSpWrite e.js:1014:18
+      9  100.0%            JS: *write32 e.js:373:12
+
+    524    1.6%  JS: *combineColor e.js:3109:17
+    468   89.3%    JS: *rasterizeTriangle e.js:2804:22
+    403   86.1%      JS: *drawTriangle e.js:2604:17
+    387   96.0%        JS: *processDisplayList e.js:2099:23
+    387  100.0%          JS: ^runRspTask e.js:1606:15
+    387  100.0%            JS: ^handleSpWrite e.js:1014:18
+     16    4.0%        JS: *handleG_TRI1 e.js:2469:17
+     16  100.0%          JS: ^processDisplayList e.js:2099:23
+     16  100.0%            JS: ^runRspTask e.js:1606:15
+     65   13.9%      JS: ^drawTriangle e.js:2604:17
+     30   46.2%        JS: *handleG_TRI1 e.js:2469:17
+     30  100.0%          JS: ^processDisplayList e.js:2099:23
+     19   63.3%            JS: ^runRspTask e.js:1606:15
+     11   36.7%            JS: ~runRspTask e.js:1606:15
+     22   33.8%        JS: *processDisplayList e.js:2099:23
+     18   81.8%          JS: ^runRspTask e.js:1606:15
+     18  100.0%            JS: ^handleSpWrite e.js:1014:18
+      4   18.2%          JS: ~runRspTask e.js:1606:15
+      4  100.0%            JS: ^handleSpWrite e.js:1014:18
+     12   18.5%        JS: ^handleG_TRI1 e.js:2469:17
+     12  100.0%          JS: ^processDisplayList e.js:2099:23
+     12  100.0%            JS: ~runRspTask e.js:1606:15
+      1    1.5%        JS: ~handleG_TRI1 e.js:2469:17
+      1  100.0%          JS: ^processDisplayList e.js:2099:23
+      1  100.0%            JS: ~runRspTask e.js:1606:15
+     42    8.0%    JS: *handleG_TEXRECT e.js:3486:20
+     42  100.0%      JS: *processDisplayList e.js:2099:23
+     42  100.0%        JS: ^runRspTask e.js:1606:15
+     42  100.0%          JS: ^handleSpWrite e.js:1014:18
+     42  100.0%            JS: *write32 e.js:373:12
+      9    1.7%    JS: *drawTriangle e.js:2604:17
+      9  100.0%      JS: *processDisplayList e.js:2099:23
+      9  100.0%        JS: ^runRspTask e.js:1606:15
+      9  100.0%          JS: ^handleSpWrite e.js:1014:18
+      9  100.0%            JS: *write32 e.js:373:12
+
+    475    1.4%  JS: *step e.js:4179:9
+    457   96.2%    JS: *<anonymous> /sessions/friendly-awesome-goodall/mnt/n64-emulator-main/tmp_bench.js:1:1
+    457  100.0%      JS: ~<anonymous> node:internal/main/run_main_module:1:1
+     18    3.8%    JS: ~<anonymous> node:internal/main/run_main_module:1:1
+
