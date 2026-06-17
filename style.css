@@ -38,6 +38,7 @@ body, html {
     background-color: #555;
     padding: 10px 24px;
     box-sizing: border-box;
+    touch-action: none;
 }
 
 .left-pad, .middle-pad, .right-pad {
@@ -73,11 +74,28 @@ body, html {
 #d-down { top: 60px; left: 30px; }
 
 .joystick {
-    width: 60px;
-    height: 60px;
+    position: relative;
+    width: 90px;
+    height: 90px;
     border-radius: 50%;
-    background-color: #999;
+    background-color: #777;
+    border: 2px solid #444;
     margin-top: 10px;
+    touch-action: none;
+}
+
+.joystick-knob {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    margin: -22px 0 0 -22px;
+    border-radius: 50%;
+    background-color: #ccc;
+    border: 1px solid #222;
+    touch-action: none;
+    pointer-events: none;
 }
 
 .l-r-buttons {

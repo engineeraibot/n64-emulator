@@ -1584,7 +1584,22 @@ class RCP {
                 const tnz = _nx*mv[2] + _ny*mv[6] + _nz*mv[10];
                 let len = Math.sqrt(tnx*tnx + tny*tny + tnz*tnz);
                 if (len < 1e-6) len = 1;
-                const ux = tnx/len, uy = tny/len;
+                const unx = tnx/len, uny = tny/len, unz = tnz/len;
+                // Project the transformed unit normal onto the look-at axes.
+                // F3DEX2 stores LOOKATX/LOOKATY (G_MV_LIGHT units 0/1) which
+                // follow the camera; s = n.lookatX, t = n.lookatY. The default
+                // look-at is X=(1,0,0)/Y=(0,1,0), so when no look-at has been
+                // set this reduces EXACTLY to the old (n.x, n.y) behaviour
+                // (byte-identical for MK64 F3DEX1 texgen, which never sets
+                // look-at, and for any scene that leaves it at the default).
+                const _la = this.rspState.lookat;
+                let ux, uy;
+                if (_la && _la[0] && _la[1]) {
+                    ux = unx*_la[0].dx + uny*_la[0].dy + unz*_la[0].dz;
+                    uy = unx*_la[1].dx + uny*_la[1].dy + unz*_la[1].dz;
+                } else {
+                    ux = unx; uy = uny;
+                }
                 const SPAN = this.rspState.texgenSpan || 0x8000;
                 if (texgenLinear) {
                     const cx = ux < -1 ? -1 : ux > 1 ? 1 : ux;

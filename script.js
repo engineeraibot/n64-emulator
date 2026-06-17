@@ -581,4 +581,62 @@ document.addEventListener('DOMContentLoaded', () => {
         b.addEventListener('mousedown', down); b.addEventListener('mouseup', up);
         b.addEventListener('touchstart', (e) => { e.preventDefault(); down(); }); b.addEventListener('touchend', (e) => { e.preventDefault(); up(); });
     });
+
+    // On-screen analog joystick (touch + mouse via Pointer Events). Drag offset
+    // from the pad centre maps to the N64 stick range (±80). Screen-down is
+    // negative N64 Y, matching the WASD bindings above (W = +80).
+    const joystick = document.getElementById('joystick');
+    const joyKnob = document.getElementById('joystick-knob');
+    if (joystick) {
+        const MAX = 80;                 // N64 stick magnitude
+        let activeId = null;            // pointerId currently driving the stick
+        let cx = 0, cy = 0, radius = 1; // pad centre + travel radius (px)
+
+        const setStick = (sx, sy) => {
+            stickHeld.x = Math.round(sx);
+            stickHeld.y = Math.round(sy);
+            applyInput();
+        };
+        const moveKnob = (px, py) => {
+            joyKnob.style.transform = `translate(${px}px, ${py}px)`;
+        };
+        const reset = () => {
+            activeId = null;
+            moveKnob(0, 0);
+            setStick(0, 0);
+        };
+        const update = (clientX, clientY) => {
+            let dx = clientX - cx;
+            let dy = clientY - cy;
+            const dist = Math.hypot(dx, dy);
+            if (dist > radius) { dx = dx / dist * radius; dy = dy / dist * radius; }
+            moveKnob(dx, dy);
+            // dx/dy are in px within [-radius, radius]; scale to ±MAX, invert Y.
+            setStick((dx / radius) * MAX, -(dy / radius) * MAX);
+        };
+
+        joystick.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            const r = joystick.getBoundingClientRect();
+            cx = r.left + r.width / 2;
+            cy = r.top + r.height / 2;
+            radius = r.width / 2;
+            activeId = e.pointerId;
+            try { joystick.setPointerCapture(e.pointerId); } catch (_) {}
+            update(e.clientX, e.clientY);
+        });
+        joystick.addEventListener('pointermove', (e) => {
+            if (e.pointerId !== activeId) return;
+            e.preventDefault();
+            update(e.clientX, e.clientY);
+        });
+        const release = (e) => {
+            if (e.pointerId !== activeId) return;
+            e.preventDefault();
+            try { joystick.releasePointerCapture(e.pointerId); } catch (_) {}
+            reset();
+        };
+        joystick.addEventListener('pointerup', release);
+        joystick.addEventListener('pointercancel', release);
+    }
 });

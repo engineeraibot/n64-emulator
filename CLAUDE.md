@@ -57,31 +57,58 @@ call-based JIT can beat it.** Read this before re-attempting ANY CPU-speed work:
     call: the browser already runs SM64/MK64 acceptably via the GL renderer; CPU throughput is
     V8-bound and not worth more JIT effort.**
 
-## ▶ NEXT TASK (Task #61) — pivot to game coverage (throughput is settled): OoT title/intro capture + F3DEX2 texgen-lookat
-Throughput is now empirically bound (Task #60), so the productive frontier is game correctness/
-coverage, not speed. Two concrete items, the first primary:
-  - **(Primary) Drive OoT to a real title/intro frame — PARTIALLY DONE / re-scoped (carried from #59).**
-    #59 drove OoT headlessly from `state_oot_n64logo` (instr 419M) through the full CPU-bound load
-    to the rendered **opening interior scene** (Link's house, nb **65673** = exactly
-    `state_oot_scene`), confirming the whole logo→scene path end-to-end from a clean boot. **But the
-    classic Triforce-over-Hyrule-field title was NOT isolated**: the boot path goes logo → long
-    black Yaz0 load (hot loops `0x80034628` bzero / `0x800d6178` CACHE / `0x800b71xx` scene-proc,
-    8714 distinct sampled PCs = productive load, not a spin) → straight into the interior scene; the
-    first geometry frame is already nb 65673 (interior), so either the title auto-advances to the
-    attract/intro or it needs the **controller connected** to hold on a "Press Start" frame. **Fresh
-    checkpoints saved: `state_oot_drive4`** (deep into the black load, ~1.0B instr past the logo, just
-    before geometry — the best resume point) **and `state_oot_drive5`** (interior scene rendered from
-    a clean logo boot). `state_oot_title` is **STILL MISLABELED** — it is a byte-copy of the logo
-    (identical instr 419,513,030, renders nb 3306). To actually capture the title next time: connect
-    the controller (joybus) before/through the drive and render the FIRST few geometry frames out of
-    `state_oot_drive4` looking for a Hyrule-field/Triforce frame distinct from the interior; if none
-    exists, accept that this build advances logo→intro and retitle the goal "capture the OoT intro
-    cutscene / Deku Tree". Probe: `tmp_t55_chain.js` (`INSTATE=/OUTSTATE=/BUDGET=ms`, ~5M steps/s,
-    ~190M steps per 38s call), `tmp_t55_render2.js` (`INSTATE=/ADV=/OUT_PNG=`), `tmp_t59_pcsample.js`
-    (top-PC histogram to tell load-vs-spin).
-  - **(Optional polish) F3DEX2 lookat for texgen** (unchanged from #58): `rspState.lookat[0/1]`
-    (LOOKATX/Y) is captured but `handleG_VTX` texgen still dots the normal against world X/Y. Wire
-    `rspState.lookat` into the texgen dot for OoT's shiny/env-mapped surfaces.
+## ✅ Task #61 DONE — OoT title disproved (logo→intro, no Triforce frame) + F3DEX2 texgen-lookat wired (byte-identical)
+Both #61 items resolved. Throughput stays settled (#60); the frontier remains game coverage.
+  - **(Primary) OoT title/Triforce frame — CONFIRMED ABSENT, goal re-scoped.** Scanned the actual
+    **displayed framebuffer** (VI_ORIGIN, not just triangle-drawn buffers — so texrect-only screens
+    can't hide) with `tmp_t61_viscan.js`: (a) from `state_oot_drive4` with START *pulsed* AND with
+    `NOSTART=1`, the displayed frame is the **interior (Link's house)** from the first VI frame
+    (nb ~64–65k, double-buffered 0x3daa80/0x3b5280, only small camera motion across 326 f3dex2
+    tasks); (b) from `state_oot_n64logo`, the **NINTENDO 64 logo fades** (nb 3306→1716) then a long
+    **black** Yaz0 load with no new geometry until the interior. The triangle-gated
+    `tmp_t61_titlescan.js` agrees (first geometry frame f312 is already the interior). **There is no
+    Hyrule-field/Triforce title frame in this build** — the boot path is logo → black load →
+    interior. The interior IS the opening/intro location, so the goal is **re-scoped to "capture the
+    OoT intro cutscene / Deku Tree"** (carry to #62). `state_oot_title` remains a mislabeled logo
+    copy (do not trust it). New probes (KEEP): `tmp_t61_viscan.js`
+    (`INSTATE=/ADV=/NOSTART=/MAXSAVE=/BUDGET=/OUTSTATE=` — VI_ORIGIN distinct-frame PNG scanner,
+    16×12 luma-fingerprint dedup, handles RGBA16 & RGBA32), `tmp_t61_titlescan.js` (triangle-gated
+    variant), `tmp_t61_lookat.js` (texgen/lookat census).
+  - **(Polish) F3DEX2 texgen-lookat — IMPLEMENTED + PROVEN byte-identical.** `handleG_VTX` texgen
+    now dots the modelview-transformed **unit** normal against the captured look-at axes
+    (`s = n·lookat[0]`, `t = n·lookat[1]`) instead of world X/Y. **The default look-at is
+    X=(1,0,0)/Y=(0,1,0), so when `rspState.lookat` is unset the new code reduces EXACTLY to the old
+    `(n.x, n.y)`** — hence byte-identical for MK64 (F3DEX 1.x texgen never populates `lookat`, that
+    capture lives in the F3DEX2 `G_MV_LIGHT` path) and for any default-look-at scene. **No GL change
+    needed**: texgen s/t is computed CPU-side in the shared `handleG_VTX`, so SW and GL both inherit
+    the fix. **Caveat — no visible effect on any currently-renderable scene**: `tmp_t61_lookat.js`
+    shows the OoT entry room (`state_oot_scene`) draws **texgenTris 0 / 58778** (Link's house has no
+    env-mapped surfaces), though it DOES set a non-default camera-following look-at (42 distinct
+    values). So this is a *latent* correctness fix that will only show once an env-mapped OoT surface
+    (shiny metal, the title Triforce, file-select) is actually rendered — exercise/verify it in #62.
+    Backup `rcp_pre_t61_backup.js`. **Verified byte-identical:** 3/3 test files (44 subtests), SM64
+    title md5 **e958048b…** (nb 40441), SM64 select_file nb **73541** / playable **76099**, MK64
+    title md5 **f378729c…** (old==new via backup swap — the texgen-heavy proof), MK64 race md5
+    **91f4b8d1…**, OoT scene nb **65673**.
+
+## ▶ NEXT TASK (Task #62) — OoT intro cutscene capture + exercise/verify the #61 texgen-lookat on real env-mapped geometry
+Game coverage is the frontier (throughput is settled, #60). Two concrete items:
+  - **(Primary) Capture/advance the OoT intro cutscene (Deku Tree / Navi) and reach interactive
+    Kokiri gameplay.** The interior (`state_oot_scene`/`state_oot_drive5`) is the opening location;
+    let it play out with **no input** and capture distinct displayed frames with `tmp_t61_viscan.js`
+    (`INSTATE=state_oot_drive5 NOSTART=1 ADV=4000`) to document the intro shots (does the camera move
+    to the Deku Tree? does Navi appear?). Then try **driving into interactive gameplay** — connect
+    the controller and walk Link out of the house into Kokiri Forest. This is throughput-gated
+    (~5M steps/s, chain with `OUTSTATE=`), so budget multiple 38s `tmp_t61_viscan.js`/`tmp_t55_chain.js`
+    calls and save fresh checkpoints (`state_oot_kokiri*`).
+  - **(Secondary, ties off #61) Exercise + visually verify the texgen-lookat fix on env-mapped
+    geometry.** Find the first OoT (or other) surface that actually uses `G_TEXTURE_GEN` with a
+    non-default look-at — candidates: a shiny/metal object in gameplay, the file-select rotating
+    Triforce/heart, water. Render it SW + GL and confirm the env-map tracks the camera (A/B the new
+    rcp.js vs `rcp_pre_t61_backup.js` — the diff should appear ONLY on texgen tris with a non-default
+    look-at). Until such a surface is reached the fix stays unverified-visually (it is verified
+    byte-identical for the no-effect case). Probe: `tmp_t61_lookat.js` reports `texgenTris` per scene
+    — use it to confirm when a scene finally exercises texgen.
 
 **Verified-correct render state to NOT regress (Task #58):** OoT scene SW nb **65673** (was 65700
 pre-lights-fix — the fix is a real, correct change, see below) / GL nb **73688** (was 73791); OoT
@@ -526,4 +553,5 @@ HLE audio) · `mmu.js` (memory map, TLB, SI/PI/VI/AI DMA, joybus) · `memory.js`
 | 57 | OoT fade-overlay compositing (SW) + depth verified: 1/2-cycle G_FILLRECT composites via combiner+blender (_compositeOverlayFillRect), isF3DEX2-gated; depth needed no code |
 | 59 | CPU throughput investigation (settles the "block-JIT" lever) + OoT logo→scene drive. SHIPPED byte-identical: collapsed the opTable→opSPECIAL/opREGIMM double dispatch into one inline lookup in `decodeAndExecute` (44/44 tests, SM64 title md5 e958048b…, 5-state lockstep RDRAM CRC identical: SM64 menu/playable, OoT scene, MK64 race/title). MEASURED & REVERTED/REJECTED: bookkeeping-strip to 1/128 steps = no gain (`tmp_cpu_nobk.js`); RDRAM memory fast-path inlined into mmu.read32/write32 = no gain, REVERTED (V8 already inlines translateAddress+memory.read32); dispatch-collapse steady-state gain itself within sandbox noise (~0–3%). **Finding: interpreter is at V8's inlining/inline-cache ceiling (~5.0–5.5M pure-CPU steps/s); only a TRUE compile-to-JS basic-block JIT (no per-instruction indirect dispatch) can beat it — "threaded code" can't.** Lever 1: drove OoT headless from state_oot_n64logo through the CPU-bound Yaz0 load to the rendered opening interior scene (nb 65673 = state_oot_scene) — confirms logo→scene end-to-end; the Triforce/Hyrule-field title was NOT isolated (path goes logo→load→interior; needs controller-connected idle capture). New checkpoints state_oot_drive4 (deep load) / state_oot_drive5 (interior from clean boot); state_oot_title confirmed mislabeled (= logo copy). Backups cpu_pre_t59_backup.js, mmu_pre_t59_backup.js. Probes tmp_t59_verify.js (lockstep+timing A/B), tmp_t59_pcsample.js (top-PC load-vs-spin), tmp_t59_time.js |
 | 60 | CPU JIT CLOSED (negative result). Built the compile-to-JS basic-block JIT #59 predicted: `stepJit`/`compileBlock`/`_jitClassify`/`validateBlock`/`_stepTail` in cpu.js, gated behind `cpu.useJit` (default OFF, interpreter path untouched + verified byte-identical to cpu_pre_t60_backup.js). One `new Function` per straight-line block (ends before branch/jump/COP0/COP1-branch), full per-instruction bookkeeping inlined per slot + pc-divergence bail, leaf handler called via monomorphic closed-over ref (no opTable indirection), SMC entry-validation, MAX 32 instr/block. PROVEN byte-identical: tmp_t60_verify.js (interp vs jit, same cpu.js) → IDENTICAL RDRAM CRC + pc + instrCount on SM64 menu/playable, OoT scene, MK64 race/title; 44/44 tests; SM64 title md5 e958048b…. MEASURED 2–4.4× SLOWER (tmp_t60_time.js real-rate, idle-FF subtracted): OoT scene 5.9→1.3M/s, SM64 menu 2.4→1.1M/s, MK64 race 1.3→0.7M/s. Disabling SMC validation (tmp_t60_iso.js SKIPVAL=1) = no change → validation NOT the cost; the big generated block optimizes worse under V8 than the tight step() loop whose indirect dispatch the inline cache already makes cheap. CONFIRMS #59: interpreter at V8 ceiling, call-based JIT can't win. Only untested lever (true source-body inlining) predicted to also lose. Backup cpu_pre_t60_backup.js. Probes tmp_t60_verify/time/iso.js. → Next frontier = game coverage, not speed. |
+| 61 | OoT title disproved + F3DEX2 texgen-lookat wired (byte-identical). (a) Scanned the DISPLAYED framebuffer (VI_ORIGIN, catches texrect-only screens) from state_oot_drive4 (START-pulsed AND NOSTART) and state_oot_n64logo: boot path is logo→black Yaz0 load→interior (Link's house) with NO Hyrule-field/Triforce title frame anywhere → goal re-scoped to "capture the OoT intro cutscene / Deku Tree" (Task #62). New probes tmp_t61_viscan.js (VI distinct-frame PNG scanner), tmp_t61_titlescan.js, tmp_t61_lookat.js. (b) handleG_VTX texgen now dots the transformed unit normal against rspState.lookat[0]/[1] (s=n·lookatX, t=n·lookatY); default look-at = X/Y axes so it reduces EXACTLY to old (n.x,n.y) → byte-identical for MK64 (never sets lookat) + default scenes. No GL change (texgen s/t is shared CPU-side in handleG_VTX). Caveat: OoT entry room draws texgenTris 0/58778 → latent fix, no visible effect yet (verify on env-mapped geometry in #62). Verified byte-identical: 44 subtests, SM64 title md5 e958048b…, select_file 73541/playable 76099, MK64 title md5 f378729c… (old==new), MK64 race 91f4b8d1…, OoT scene 65673. Backup rcp_pre_t61_backup.js. |
 | 58 | OoT lights off-by-one FIXED + GL fade compositing + MK64 fillrect decision. (a) F3DEX2 G_MV_LIGHT slot decode: units 0/1 of the DMEM light buffer are LOOKATX/LOOKATY (gbi2 G_MVO_*), lights start at unit 2 → slot=unit-2 (was ofs/24-1, which injected LOOKATY's rgb 0,128,0 as a bogus GREEN up-light in slot 0 and shifted L0/L1/ambient up one). OoT entry room now correctly lit (bluish L0 170,160,255 / warm L1 195,150,70 / dim ambient 10,10,10); 854 px changed, scene SW nb 65700→65673 / GL 73791→73688. lookat[0/1] now captured for future texgen. (b) GL fade compositing: new glr.compositeFillRect draws the 1/2-cycle fade as a non-textured kind-2 quad through the batched combiner+blender (matches SW); OoT "NINTENDO 64" logo now fades in GL (ADV=8 nb ~3300 = SW, ADV≥30 fully faded to black). (c) MK64 fillrect: A/B render (tmp_t58_mk64ab.js) shows compositing its full-screen OPAQUE-WHITE-combiner fillrect gives 0 visible benefit (race+title nb identical, geometry overdraws it) but is a byte-identical regression risk → KEEP the isF3DEX2 gate. All F3DEX2-gated → SM64/MK64 byte-IDENTICAL: 3/3 test files, SM64 title md5 e958048b…, GL select 73542, SM64/MK64 compositeHits 0, MK64 race A/B md5 91f4b8d1… (vs rcp_pre_t58_backup.js). Backups rcp_pre_t58_backup.js + gl-renderer_pre_t58_backup.js. Probes tmp_t58_lights/shadeuse/fadetrace/mk64fill/mk64ab/gldump.js |
