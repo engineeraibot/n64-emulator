@@ -166,6 +166,13 @@ class CPU {
     reset() {
         this.fetchPage = -1;
         this.fetchView = null;
+        this.rdramView = null;
+        // Task #60: compile-to-JS basic-block JIT. Gated OFF by default; the
+        // interpreter path (step) is untouched. When on, stepJit() runs one
+        // compiled straight-line block (no per-instruction indirect dispatch)
+        // and falls back to step() for control-flow / non-RDRAM PCs.
+        this.useJit = false;
+        this.jitCache = new Map();
         this.instructionCount = 0;
         this.pcHistory = new Uint32Array(100);
         this.pcHistoryIdx = 0;
@@ -224,13 +231,21 @@ class CPU {
 
         const runLoop = () => {
             if (!this.isRunning) return;
+            // Audio-master sync (Task #42): the host audio sink reports its buffer
+            // fill; while it has >~160ms banked we pause stepping, locking the
+            // game's production rate to real-time consumption. No count<->wall
+            // calibration (the emulator's approximated DMA/timer durations are NOT
+            // consistent with the audio-chain count rate, so a global counts/sec
+            // throttle stalls boot) — boot and pre-audio phases run unthrottled.
+            if (this.hostThrottle && this.hostThrottle()) { setTimeout(runLoop, 4); return; }
             const sliceStart = now();
             const maxStepsPerSlice = 250000;
             const maxSliceMs = 8;
             let steps = 0;
 
+            const useJit = this.useJit;
             while (steps < maxStepsPerSlice) {
-                this.step();
+                if (useJit) this.stepJit(); else this.step();
                 steps++;
                 if ((steps & 0x3FF) === 0 && (now() - sliceStart) >= maxSliceMs) {
                     break;
@@ -434,12 +449,15 @@ class CPU {
         const physPc = (pcNum >= 0x80000000 && pcNum <= 0xBFFFFFFF) ? (pcNum & 0x1FFFFFFF) : pcNum;
 
         if (physPc <= 0x7FFFFF) {
-            const page = physPc >>> 12;
-            if (page !== this.fetchPage) {
-                this.fetchPage = page;
-                this.fetchView = new DataView(this.mmu.memory.rdram, page << 12, 4096);
-            }
-            return this.fetchView.getUint32(physPc & 0xFFF, false);
+            // Instruction fetch reads ONE persistent DataView over the live RDRAM
+            // buffer. RDRAM is allocated once and never reassigned, and every store
+            // writes it in place, so SMC / DMA-loaded code are visible immediately
+            // with no per-page view rebuild and no fetch-cache invalidation.
+            // Task #54: eliminates a DataView allocation that previously happened
+            // ~1/7 steps (invalidateCache fired on every RDRAM store).
+            let v = this.rdramView;
+            if (v === null) v = this.rdramView = this.mmu.memory.rdramView;
+            return v.getUint32(physPc, false);
         }
         return this.mmu.read32(physPc);
     }
@@ -572,10 +590,144 @@ class CPU {
     }
 
     decodeAndExecute(instruction, currentPc, isDelaySlot) {
+        // Single-level dispatch: SPECIAL (0x00) and REGIMM (0x01) are the two
+        // most common opcode classes (all R-type ALU ops are SPECIAL). Resolving
+        // their leaf handler inline here removes the opSPECIAL/opREGIMM wrapper
+        // call layer that previously sat between opTable and the leaf table
+        // (Task #59 — the "collapse the opTable/specialTable double dispatch"
+        // lever). Byte-identical: identical leaf handlers, identical order, and
+        // the same undefined->pc+4 fallback the wrappers applied.
         const opcode = (instruction >>> 26) & 0x3F;
-        const res = this.opTable[opcode](instruction, currentPc, isDelaySlot);
+        let res;
+        if (opcode === 0) {
+            res = this.specialTable[instruction & 0x3F](instruction, currentPc, isDelaySlot);
+        } else if (opcode === 1) {
+            res = this.regimmTable[(instruction >>> 16) & 0x1F](instruction, currentPc, isDelaySlot);
+        } else {
+            res = this.opTable[opcode](instruction, currentPc, isDelaySlot);
+        }
         if (res !== undefined) return res;
         return (currentPc + 4) | 0;
+    }
+
+    // ===== Task #60: compile-to-JS basic-block JIT =====================
+    // Classify an instruction word for block formation. Returns the leaf
+    // handler reference to call (a monomorphic direct call, NOT an indirect
+    // opTable[opcode] lookup) for "safe" straight-line instructions, or null
+    // for any instruction that may divert PC (branch/jump/COP0-ERET/COP1-branch)
+    // or has no handler — those END the block and are run by the interpreter.
+    _jitClassify(iw) {
+        const op = (iw >>> 26) & 0x3F;
+        if (op === 0) { // SPECIAL
+            const f = iw & 0x3F;
+            if (f === 0x08 || f === 0x09) return null; // JR / JALR
+            return this.specialTable[f] || null;
+        }
+        if (op === 1) return null; // REGIMM (branches + traps)
+        if (op === 2 || op === 3 || op === 4 || op === 5 || op === 6 || op === 7
+            || op === 0x14 || op === 0x15 || op === 0x16 || op === 0x17) return null; // J/JAL/branches
+        if (op === 0x10) return null; // COP0 (ERET diverts PC)
+        if (op === 0x11) { // COP1: arith is safe, BC1 (sub=0x08) is a branch
+            if (((iw >>> 21) & 0x1F) === 0x08) return null;
+            return this.opTable[0x11] || null;
+        }
+        return this.opTable[op] || null;
+    }
+
+    // Decode a straight-line block starting at physical address startPhys
+    // (virtual startVaddr) and compile it to a single JS function. Each slot
+    // replicates step()'s per-instruction bookkeeping (instructionCount, Count,
+    // checkInternalEvents, MI mirror, interrupt check) inline, bails to
+    // _stepTail() if an interrupt/timer diverts PC, then calls the leaf handler
+    // directly. Block ends before the first control-flow instruction.
+    compileBlock(startPhys, startVaddr) {
+        const v = this.rdramView || (this.rdramView = this.mmu.memory.rdramView);
+        const words = [], addrs = [], handlers = [];
+        const MAX = 32;
+        let off = 0;
+        while (words.length < MAX) {
+            const phys = (startPhys + off) >>> 0;
+            if (phys > 0x7FFFFC) break; // need a full word inside RDRAM
+            const iw = v.getUint32(phys, false) >>> 0;
+            const h = this._jitClassify(iw);
+            if (h === null) break;
+            words.push(iw); addrs.push((startVaddr + off) | 0); handlers.push(h);
+            off += 4;
+        }
+        const n = words.length;
+        let src = 'return function(c){\n';
+        for (let k = 0; k < n; k++) {
+            const P = addrs[k] | 0, IW = words[k] | 0, Pn = (addrs[k] + 4) | 0;
+            src += 'c.instructionCount++;c.gpr[0]=0;';
+            src += 'if((c.instructionCount&1)===0){c.cp0Registers[9]=(c.cp0Registers[9]+1)|0;c.serviceCompareTimer();}';
+            src += 'if((c.instructionCount&0x7F)===0)c.mmu.checkInternalEvents();';
+            src += '{var mi=c.mmu.miRegisters[2],mk=c.mmu.miRegisters[3];if(mi&mk)c.cp0Registers[13]|=0x400;else c.cp0Registers[13]&=~0x400;}';
+            src += '{var st=c.cp0Registers[12],ca=c.cp0Registers[13];if((st&1)&&!(st&2)&&!(st&4)&&((st>>8)&(ca>>8)&0xFF))c.raiseException(0,c.pc,false);}';
+            src += 'if((c.pc|0)!==(' + P + '|0)){c._stepTail();return;}';
+            src += 'c.exceptionRaised=false;h' + k + '(' + IW + '|0,' + P + '|0,false);if(c.exceptionRaised)return;c.pc=' + Pn + '|0;\n';
+        }
+        src += '};';
+        let fn;
+        if (n === 0) {
+            fn = null;
+        } else {
+            const argNames = [];
+            for (let k = 0; k < n; k++) argNames.push('h' + k);
+            const factory = new Function(...argNames, src);
+            fn = factory(...handlers);
+        }
+        return { n, startPhys: startPhys >>> 0, words, fn };
+    }
+
+    // SMC safety: a cached block is valid only if its instruction words still
+    // match the live RDRAM bytes (compare on entry, recompile on mismatch).
+    validateBlock(blk) {
+        const v = this.rdramView || (this.rdramView = this.mmu.memory.rdramView);
+        const words = blk.words, base = blk.startPhys, n = blk.n;
+        for (let k = 0; k < n; k++) {
+            if ((v.getUint32((base + k * 4) >>> 0, false) >>> 0) !== words[k]) return false;
+        }
+        return true;
+    }
+
+    // Tail of step() (fetch + execute + branch/delay-slot) for the CURRENT
+    // this.pc. Used by the JIT when an interrupt/timer diverts PC mid-block:
+    // the slot prologue already did the bookkeeping for this step, so the tail
+    // completes exactly one step()'s worth of work. Kept byte-identical to the
+    // fetch/execute portion of step().
+    _stepTail() {
+        const currentPc = this.pc;
+        if (currentPc & 3) { this.raiseException(4, currentPc, false); return; }
+        const instruction = this.readInstructionWord(currentPc);
+        if (instruction === 0x1000FFFF
+            && this.tryFastForwardIdleLoop(this.cp0Registers[12], this.cp0Registers[13])) return;
+        this.exceptionRaised = false;
+        const nextPc = this.decodeAndExecute(instruction, currentPc, false);
+        if (this.exceptionRaised || nextPc === null) return;
+        if (this.branchTaken) {
+            const ds = this.readInstructionWord((currentPc + 4) | 0);
+            this.decodeAndExecute(ds, (currentPc + 4) | 0, true);
+            if (this.exceptionRaised) return;
+            this.pc = this.branchTarget | 0;
+            this.branchTaken = false;
+        } else {
+            this.pc = nextPc | 0;
+        }
+    }
+
+    // One JIT "step": run a compiled straight-line block from this.pc, or fall
+    // back to a single interpreter step() for control-flow / non-RDRAM PCs.
+    stepJit() {
+        const pcNum = this.pc >>> 0;
+        const phys = (pcNum >= 0x80000000 && pcNum <= 0xBFFFFFFF) ? (pcNum & 0x1FFFFFFF) : pcNum;
+        if (phys > 0x7FFFFF) { this.step(); return; }
+        let blk = this.jitCache.get(phys);
+        if (blk === undefined || !this.validateBlock(blk)) {
+            blk = this.compileBlock(phys, pcNum);
+            this.jitCache.set(phys, blk);
+        }
+        if (blk.n === 0) { this.step(); return; } // first instr is control-flow/unsupported
+        blk.fn(this);
     }
 
     opBEQL(i, pc, ds) {
@@ -778,7 +930,7 @@ class CPU {
         const d = this.mmu.read64(a & ~7);
         const v = this._reg64(rt);
         const s = a & 7;
-        this._setReg64(rt, (s === 7) ? d : ((v & ~((1n << (BigInt(7 - s + 1) * 8n)) - 1n)) | (d >> (BigInt(7 - s) * 8n))));
+        this._setReg64(rt, (s === 7) ? d : ((v & ~((1n << (BigInt(s + 1) * 8n)) - 1n)) | (d >> (BigInt(7 - s) * 8n))));
     }
 
     opSDL(i) {
@@ -794,7 +946,7 @@ class CPU {
         const d = this.mmu.read64(a & ~7);
         const v = this._reg64((i >> 16) & 0x1F);
         const s = a & 7;
-        this.mmu.write64(a & ~7, (s === 7) ? v : (d & ((1n << (BigInt(s + 1) * 8n)) - 1n)) | (v << BigInt((7 - s) * 8)));
+        this.mmu.write64(a & ~7, (s === 7) ? v : (d & ((1n << (BigInt(7 - s) * 8n)) - 1n)) | (v << BigInt((7 - s) * 8)));
     }
 
     opLL(i) { this.opLW(i); }

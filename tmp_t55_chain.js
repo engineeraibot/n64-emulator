@@ -1,0 +1,20 @@
+process.env.ROM='Legend of Zelda, The - Ocarina of Time (Europe) (En,Fr,De).n64';
+const {buildMachine}=require('./tmp_boot');
+const {loadState,saveState}=require('./tmp_state');
+const {ram,mmu,rcp,cpu}=buildMachine();
+const log=console.error.bind(console);
+const IN=process.env.INSTATE||'state_oot_probe3';
+const OUT=process.env.OUTSTATE||'state_oot_chain';
+loadState(IN,ram,mmu,cpu,rcp);
+let tris=0, firstTriTask=-1, curTris=0, maxTris=0;
+const oD=rcp.drawTriangle.bind(rcp); rcp.drawTriangle=function(a,b,c){tris++;curTris++;if(firstTriTask<0)firstTriTask=rcp.f3dex2TaskCount|0;return oD(a,b,c);};
+const oP=rcp.processDisplayList.bind(rcp);
+rcp.processDisplayList=function(a,d){curTris=0;const r=oP(a,d);if(curTris>maxTris)maxTris=curTris;return r;};
+const startF=rcp.f3dex2TaskCount|0;const t0=Date.now();
+const BUDGET=parseInt(process.env.BUDGET||'40000');
+let steps=0;
+for(let s=0;s<800000000;s++){try{cpu.step();}catch(e){log('THREW',s,e.message);break;}steps=s;
+  if((s&0x3FFF)===0){if(Date.now()-t0>BUDGET)break;}}
+const dt=(Date.now()-t0)/1000;
+saveState(OUT,ram,mmu,cpu,rcp);
+log('IN',IN,'->',OUT,'steps',steps,'rate',(steps/dt/1e6).toFixed(2)+'M/s','f3dex2 +'+((rcp.f3dex2TaskCount|0)-startF),'tris',tris,'maxTrisPerFrame',maxTris,'firstTriTask',firstTriTask,'viInt',mmu.viInterruptCount|0);

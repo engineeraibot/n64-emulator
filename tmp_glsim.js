@@ -258,13 +258,30 @@ function texAddr(c, mask, cm, size) {
     let m = c % 1024; if (m < 0) m += 1024;
     return m;
 }
-function fetchTexel(u, tex, st) {
-    let ts = texAddr(Math.floor(st[0]), u.uAddrS[0], u.uAddrS[1], u.uAddrS[2]);
-    let tt = texAddr(Math.floor(st[1]), u.uAddrT[0], u.uAddrT[1], u.uAddrT[2]);
+function fetchTexelI(u, tex, i, j) {
+    let ts = texAddr(i, u.uAddrS[0], u.uAddrS[1], u.uAddrS[2]);
+    let tt = texAddr(j, u.uAddrT[0], u.uAddrT[1], u.uAddrT[2]);
     ts = Math.min(Math.max(ts, 0), u.uTexSize[0] - 1);
     tt = Math.min(Math.max(tt, 0), u.uTexSize[1] - 1);
     const o = ((tt | 0) * tex.W + (ts | 0)) * 4;
     return [tex.pixels[o], tex.pixels[o+1], tex.pixels[o+2], tex.pixels[o+3]];
+}
+// Twin of the shader's 3-point bilinear (Task #45).
+function fetchTexel(u, tex, st) {
+    const bx = Math.floor(st[0]), by = Math.floor(st[1]);
+    if (!u.uBilerp) return fetchTexelI(u, tex, bx, by);
+    const fx = st[0] - bx, fy = st[1] - by;
+    const t00 = fetchTexelI(u, tex, bx, by);
+    const t10 = fetchTexelI(u, tex, bx + 1, by);
+    const t01 = fetchTexelI(u, tex, bx, by + 1);
+    const out = [0, 0, 0, 0];
+    if (fx + fy <= 1) {
+        for (let k = 0; k < 4; k++) out[k] = t00[k] + fx * (t10[k] - t00[k]) + fy * (t01[k] - t00[k]);
+    } else {
+        const t11 = fetchTexelI(u, tex, bx + 1, by + 1);
+        for (let k = 0; k < 4; k++) out[k] = t11[k] + (1 - fx) * (t01[k] - t11[k]) + (1 - fy) * (t10[k] - t11[k]);
+    }
+    return out;
 }
 const clampc = (v) => Math.min(Math.max(v, 0), 255);
 function cs4(u, sel, t, s, c1, comb) {

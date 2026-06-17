@@ -35,33 +35,195 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Audio output: stream AI DMA PCM (filled by the HLE audio RSP task) to WebAudio ---
     // The N64 hands AI 16-bit signed stereo PCM; mmu.emitAudioBuffer forwards each block here.
-    let audioCtx = null, audioTime = 0;
+    //
+    // Pull-model sink (crackle fix): the old per-block BufferSourceNode scheduling
+    // underran after nearly every block whenever the emulator ran below real time
+    // (~25-45% of PAL speed), producing a click at each buffer edge. Instead we feed a
+    // ring buffer drained by an AudioWorklet (audio thread — immune to the saturated
+    // main thread). Playback speed follows a windowed estimate of the emulator's
+    // actual production rate, hard-capped at 1.05x (Task #42: an integral controller
+    // here wound up on bursty arrivals → chipmunk), with a weak fill trim to hold
+    // the jitter buffer near target. Below real time the pitch slows with the emu
+    // instead of crackling; at full speed it converges to 1.0x. Underruns fade out and
+    // resume with a fade-in instead of clicking. ScriptProcessor fallback for browsers
+    // without AudioWorklet.
+    let audioCtx = null, workletNode = null, fallbackEngine = null, gainNode = null;
     const AUDIO_GAIN = 0.6;
+
+    // Self-contained pull engine: stringified into the worklet blob AND used
+    // directly by the ScriptProcessor fallback, so keep it dependency-free.
+    function N64AudioPullEngine(outRate) {
+        const CAP = 1 << 17;                    // ring capacity in stereo frames (~3s @44.1k)
+        const buf = new Float32Array(CAP * 2);  // interleaved L,R
+        let w = 0, r = 0, frac = 0, fill = 0;
+        let inRate = 32000, started = false, ramp = 0;
+        let lastL = 0, lastR = 0;
+        const TARGET = 4096;                    // input frames (~130ms @31.4kHz)
+        const START = 2048;                     // refill level before (re)starting
+        // Production-rate feedforward (Task #42): estimate the input rate over
+        // 0.25s windows (EMA-smoothed) and consume at that rate. No integrator,
+        // so bursty arrivals cannot wind speed up; the hard cap makes chipmunk
+        // impossible. A weak proportional trim (max ±15%) recenters the fill.
+        const WIN = 0.25, SPEED_CAP = 1.0; // backpressure (audio-master sync) makes >1.0 headroom unnecessary
+        let inAcc = 0, winT = 0, prodRate = 0, haveRate = false;
+
+        function push(pcm, rate) {
+            if (rate > 0) inRate = rate;
+            const frames = pcm.length >> 1;
+            inAcc += frames;
+            for (let i = 0; i < frames; i++) {
+                if (fill >= CAP - 2) { r = (r + 1) % CAP; fill--; } // overflow: drop oldest
+                buf[w * 2] = pcm[i * 2];
+                buf[w * 2 + 1] = pcm[i * 2 + 1];
+                w = (w + 1) % CAP; fill++;
+            }
+        }
+
+        function pull(L, R, n) {
+            winT += n / outRate;
+            if (winT >= WIN) {
+                const inst = inAcc / winT;
+                prodRate = haveRate ? prodRate * 0.7 + inst * 0.3 : inst;
+                haveRate = true;
+                inAcc = 0; winT = 0;
+            }
+            if (!started) {
+                if (fill < START || !haveRate || prodRate <= 0) { L.fill(0, 0, n); R.fill(0, 0, n); return; }
+                started = true; ramp = 0;
+            }
+            // Fill at/above target proves production keeps up -> play at native
+            // rate (the backpressure throttle holds it there). Below target the
+            // production-rate feedforward governs, trimmed slightly toward refill.
+            let speed;
+            if (fill >= TARGET) {
+                speed = SPEED_CAP;
+            } else {
+                const trim = 1 + Math.max(-0.15, (fill - TARGET) / (TARGET * 8));
+                speed = Math.min(SPEED_CAP, Math.max(0.02, (prodRate / inRate) * trim));
+            }
+            const ratio = (inRate / outRate) * speed;
+            for (let i = 0; i < n; i++) {
+                if (fill < 2) {
+                    // Underrun: exponential fade from the last sample, then silence
+                    // until the ring refills to START (declick).
+                    started = false;
+                    let v = 1;
+                    for (let j = i; j < n; j++) {
+                        v *= 0.92;
+                        L[j] = lastL * v; R[j] = lastR * v;
+                    }
+                    lastL = 0; lastR = 0;
+                    return;
+                }
+                const a = r * 2, b = ((r + 1) % CAP) * 2;
+                if (ramp < 1) ramp = Math.min(1, ramp + 1 / 256); // fade-in after (re)start
+                lastL = L[i] = (buf[a] + (buf[b] - buf[a]) * frac) * ramp;
+                lastR = R[i] = (buf[a + 1] + (buf[b + 1] - buf[a + 1]) * frac) * ramp;
+                frac += ratio;
+                const adv = frac | 0;
+                if (adv > 0) { frac -= adv; r = (r + adv) % CAP; fill -= adv; }
+            }
+        }
+
+        return { push, pull, fill: () => fill };
+    }
+
+    const workletSrc = 'const N64AudioPullEngine = ' + N64AudioPullEngine.toString() + ';\n' +
+        'class N64SinkProcessor extends AudioWorkletProcessor {\n' +
+        '  constructor() { super(); this.engine = N64AudioPullEngine(sampleRate);\n' +
+        '    this.port.onmessage = (e) => this.engine.push(e.data.pcm, e.data.rate); }\n' +
+        '  process(inputs, outputs) { const o = outputs[0];\n' +
+        '    this.engine.pull(o[0], o[1] || o[0], o[0].length);\n' +
+        '    if (((this.k = (this.k | 0) + 1) & 7) === 0) this.port.postMessage({ fill: this.engine.fill() });\n' +
+        '    return true; }\n' +
+        '}\n' +
+        'registerProcessor("n64-audio-sink", N64SinkProcessor);\n';
+
+    function startAudioFallback() {
+        fallbackEngine = N64AudioPullEngine(audioCtx.sampleRate);
+        const sp = audioCtx.createScriptProcessor(2048, 1, 2);
+        sp.onaudioprocess = (e) => {
+            const ob = e.outputBuffer;
+            fallbackEngine.pull(ob.getChannelData(0), ob.getChannelData(1), ob.length);
+        };
+        sp.connect(gainNode);
+    }
+
     function initAudio() {
         if (audioCtx) return;
-        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audioCtx = null; }
+        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        catch (e) { audioCtx = null; return; }
+        gainNode = audioCtx.createGain();
+        gainNode.gain.value = AUDIO_GAIN;
+        gainNode.connect(audioCtx.destination);
+        if (audioCtx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
+            const url = URL.createObjectURL(new Blob([workletSrc], { type: 'application/javascript' }));
+            audioCtx.audioWorklet.addModule(url).then(() => {
+                workletNode = new AudioWorkletNode(audioCtx, 'n64-audio-sink',
+                    { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+                workletNode.port.onmessage = (e) => { sinkFill = e.data.fill | 0; sinkFillStamp = performance.now(); };
+                workletNode.connect(gainNode);
+            }).catch((e) => {
+                console.warn('AudioWorklet unavailable, using ScriptProcessor fallback:', e);
+                startAudioFallback();
+            }).finally(() => URL.revokeObjectURL(url));
+        } else {
+            startAudioFallback();
+        }
     }
-    // Resume the context on first user gesture (browsers block autoplay).
-    document.addEventListener('pointerdown', () => { initAudio(); if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); }, { once: false });
+    // Unlock on first user gesture (browsers block autoplay). keydown too — the
+    // game is keyboard-controlled, so mouse-less players must also get sound.
+    const unlockAudio = () => { initAudio(); if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); };
+    document.addEventListener('pointerdown', unlockAudio);
+    document.addEventListener('keydown', unlockAudio);
+
     mmu.audioSink = (pcm, dacRate) => {
         if (!audioCtx || pcm.length < 2) return;
         // AI_DACRATE encodes the sample rate: rate = VI_clock / (dacRate + 1). PAL VI clock ~49.66MHz.
         let rate = dacRate > 0 ? Math.round(48681812 / (dacRate + 1)) : 32000;
         if (!(rate >= 8000 && rate <= 48000)) rate = 32000;
-        const frames = pcm.length >> 1;
-        const buf = audioCtx.createBuffer(2, frames, rate);
-        const L = buf.getChannelData(0), R = buf.getChannelData(1);
-        for (let i = 0; i < frames; i++) {
-            L[i] = (pcm[i * 2] / 32768) * AUDIO_GAIN;
-            R[i] = (pcm[i * 2 + 1] / 32768) * AUDIO_GAIN;
-        }
-        const src = audioCtx.createBufferSource();
-        src.buffer = buf; src.connect(audioCtx.destination);
-        const now = audioCtx.currentTime;
-        if (audioTime < now) audioTime = now + 0.02; // small lead to avoid underruns
-        src.start(audioTime);
-        audioTime += frames / rate;
+        const f32 = new Float32Array(pcm.length);
+        for (let i = 0; i < pcm.length; i++) f32[i] = pcm[i] / 32768;
+        if (workletNode) workletNode.port.postMessage({ pcm: f32, rate }, [f32.buffer]);
+        else if (fallbackEngine) fallbackEngine.push(f32, rate);
     };
+    // Audio-master sync (Task #42): pause the CPU loop while the sink has >~160ms
+    // banked, locking game speed (and pitch) to real time through the audio clock.
+    // Only when audio is actually being consumed — never during boot, before the
+    // user gesture, or if fill reports go stale (suspended tab, worklet death).
+    let sinkFill = 0, sinkFillStamp = 0;
+    const THROTTLE_FILL = 5120; // input frames (~163ms @31.4kHz; sink TARGET is 4096)
+    const audioThrottle = () => {
+        if (!audioCtx || audioCtx.state !== 'running') return false;
+        if (fallbackEngine) return fallbackEngine.fill() > THROTTLE_FILL;
+        if (!workletNode) return false;
+        if (performance.now() - sinkFillStamp > 300) return false;
+        return sinkFill > THROTTLE_FILL;
+    };
+    // VI vblank wall-clock pacer: cap emulated vblanks at the video field rate
+    // (PAL 50Hz / NTSC 60Hz) of REAL time. SM64 paces its game logic on vblank
+    // messages, so this locks game speed at 1.0x whenever the host can keep up —
+    // including before the audio-unlock gesture / with audio suspended, where the
+    // audio-master sync (Task #42) cannot engage. It is a pure rate limiter
+    // anchored to "now" whenever the emulator is at/behind real time: no debt is
+    // accumulated, so a slow stretch is never followed by a fast-forward burst.
+    // Gated on the first graphics task: boot (f3d==0, ~40M steps) stays unpaced —
+    // the emulator's approximated DMA/timer durations make pre-game emulated time
+    // uncalibrated, and pacing it would stall boot (same reason Task #42 rejected
+    // a global counts/sec throttle). NOT a counts/sec throttle: vblank count IS
+    // the game's own speed clock, independent of count-rate calibration.
+    let viPaceCount = -1, viPaceStamp = 0;
+    const viPacer = () => {
+        if (((rcp.f3dTaskCount | 0) + (rcp.f3dex2TaskCount | 0)) < 1) return false;
+        const c = mmu.viInterruptCount | 0;
+        const t = performance.now();
+        const periodMs = (mmu.viRegisters[6] & 0x3FF) > 0x240 ? 20 : 50 / 3; // mirrors mmu's PAL/NTSC pick
+        if (viPaceCount < 0) { viPaceCount = c; viPaceStamp = t; return false; }
+        const ahead = (c - viPaceCount) - (t - viPaceStamp) / periodMs;
+        if (ahead <= 0) { viPaceCount = c; viPaceStamp = t; return false; } // at/behind real time: re-anchor
+        return ahead > 1; // ~1 field of slack absorbs slice-granularity jitter
+    };
+    cpu.hostThrottle = () => audioThrottle() || viPacer();
     const frameCanvas = document.createElement('canvas');
     frameCanvas.width = FB_WIDTH;
     frameCanvas.height = FB_HEIGHT;

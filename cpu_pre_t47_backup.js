@@ -1,0 +1,1108 @@
+class CPU {
+    constructor(mmu, rcp) {
+        this.mmu = mmu;
+        this.rcp = rcp;
+        this.initOpTables();
+        this.reset();
+    }
+
+    invalidateCache() {
+        this.fetchPage = -1;
+        this.fetchView = null;
+    }
+
+    initOpTables() {
+        this.opTable = new Array(64).fill(this.opInvalid.bind(this));
+        this.specialTable = new Array(64).fill(this.opInvalid.bind(this));
+        this.regimmTable = new Array(32).fill(this.opInvalid.bind(this));
+
+        // REGIMM Table
+        this.regimmTable[0x00] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0) { this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; this.branchTaken = true; return (pc + 4) | 0; } else { this.branchTarget = (pc + 8) | 0; this.branchTaken = true; return (pc + 4) | 0; } };
+        this.regimmTable[0x01] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0) { this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; this.branchTaken = true; return (pc + 4) | 0; } else { this.branchTarget = (pc + 8) | 0; this.branchTaken = true; return (pc + 4) | 0; } };
+        this.regimmTable[0x02] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0) { this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; this.branchTaken = true; return (pc + 4) | 0; } else { return (pc + 8) | 0; } };
+        this.regimmTable[0x03] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0) { this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; this.branchTaken = true; return (pc + 4) | 0; } else { return (pc + 8) | 0; } };
+        this.regimmTable[0x10] = (i, pc, ds) => { this.gpr[31] = (pc + 8) | 0; this.gprHi[31] = ((pc + 8) | 0) >> 31; this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; if (this.gpr[(i >> 21) & 0x1F] < 0) { this.branchTaken = true; } else { this.branchTarget = (pc + 8) | 0; this.branchTaken = true; } return (pc + 4) | 0; };
+        this.regimmTable[0x11] = (i, pc, ds) => { this.gpr[31] = (pc + 8) | 0; this.gprHi[31] = ((pc + 8) | 0) >> 31; this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; if (this.gpr[(i >> 21) & 0x1F] >= 0) { this.branchTaken = true; } else { this.branchTarget = (pc + 8) | 0; this.branchTaken = true; } return (pc + 4) | 0; };
+        this.regimmTable[0x12] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < 0) { this.gpr[31] = (pc + 8) | 0; this.gprHi[31] = ((pc + 8) | 0) >> 31; this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; this.branchTaken = true; return (pc + 4) | 0; } else { return (pc + 8) | 0; } };
+        this.regimmTable[0x13] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= 0) { this.gpr[31] = (pc + 8) | 0; this.gprHi[31] = ((pc + 8) | 0) >> 31; this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0; this.branchTaken = true; return (pc + 4) | 0; } else { return (pc + 8) | 0; } };
+        this.regimmTable[0x08] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= ((i << 16) >> 16)) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x09] = (i, pc, ds) => { if ((this.gpr[(i >> 21) & 0x1F] >>> 0) >= (((i << 16) >> 16) >>> 0)) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0A] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < ((i << 16) >> 16)) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0B] = (i, pc, ds) => { if ((this.gpr[(i >> 21) & 0x1F] >>> 0) < (((i << 16) >> 16) >>> 0)) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0C] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] === ((i << 16) >> 16)) return this.raiseException(13, pc, ds); };
+        this.regimmTable[0x0E] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] !== ((i << 16) >> 16)) return this.raiseException(13, pc, ds); };
+
+        // Primary Opcodes
+        this.opTable[0x00] = this.opSPECIAL.bind(this);
+        this.opTable[0x01] = this.opREGIMM.bind(this);
+        this.opTable[0x02] = this.opJ.bind(this);
+        this.opTable[0x03] = this.opJAL.bind(this);
+        this.opTable[0x04] = this.opBEQ.bind(this);
+        this.opTable[0x05] = this.opBNE.bind(this);
+        this.opTable[0x06] = this.opBLEZ.bind(this);
+        this.opTable[0x07] = this.opBGTZ.bind(this);
+        this.opTable[0x08] = this.opADDIU.bind(this);
+        this.opTable[0x09] = this.opADDIU.bind(this);
+        this.opTable[0x0A] = this.opSLTI.bind(this);
+        this.opTable[0x0B] = this.opSLTIU.bind(this);
+        this.opTable[0x0C] = this.opANDI.bind(this);
+        this.opTable[0x0D] = this.opORI.bind(this);
+        this.opTable[0x0E] = this.opXORI.bind(this);
+        this.opTable[0x0F] = this.opLUI.bind(this);
+        this.opTable[0x10] = this.opCOP0.bind(this);
+        this.opTable[0x11] = this.opCOP1.bind(this);
+        this.opTable[0x12] = (i, pc) => (pc + 4) | 0; // COP2 NOP
+        this.opTable[0x13] = (i, pc) => (pc + 4) | 0; // COP3 NOP
+        this.opTable[0x14] = this.opBEQL.bind(this);
+        this.opTable[0x15] = this.opBNEL.bind(this);
+        this.opTable[0x16] = this.opBLEZL.bind(this);
+        this.opTable[0x17] = this.opBGTZL.bind(this);
+        this.opTable[0x18] = this.opDADDIU.bind(this);
+        this.opTable[0x19] = this.opDADDIU.bind(this);
+        this.opTable[0x1A] = this.opLDL.bind(this);
+        this.opTable[0x1B] = this.opLDR.bind(this);
+        this.opTable[0x1C] = this.opSPECIAL2.bind(this);
+        this.opTable[0x20] = this.opLB.bind(this);
+        this.opTable[0x21] = this.opLH.bind(this);
+        this.opTable[0x22] = this.opLWL.bind(this);
+        this.opTable[0x23] = this.opLW.bind(this);
+        this.opTable[0x24] = this.opLBU.bind(this);
+        this.opTable[0x25] = this.opLHU.bind(this);
+        this.opTable[0x26] = this.opLWR.bind(this);
+        this.opTable[0x27] = this.opLWU.bind(this);
+        this.opTable[0x28] = this.opSB.bind(this);
+        this.opTable[0x29] = this.opSH.bind(this);
+        this.opTable[0x2A] = this.opSWL.bind(this);
+        this.opTable[0x2B] = this.opSW.bind(this);
+        this.opTable[0x2C] = this.opSDL.bind(this);
+        this.opTable[0x2D] = this.opSDR.bind(this);
+        this.opTable[0x2E] = this.opSWR.bind(this);
+        this.opTable[0x2F] = (i, pc) => (pc + 4) | 0; // CACHE
+        this.opTable[0x30] = this.opLL.bind(this);
+        this.opTable[0x31] = this.opLWC1.bind(this);
+        this.opTable[0x32] = (i, pc) => (pc + 4) | 0; // LWC2 NOP
+        this.opTable[0x34] = this.opLLD.bind(this);
+        this.opTable[0x35] = this.opLDC1.bind(this);
+        this.opTable[0x36] = (i, pc) => (pc + 4) | 0; // LDC2 NOP
+        this.opTable[0x37] = this.opLD.bind(this);
+        this.opTable[0x38] = this.opSC.bind(this);
+        this.opTable[0x39] = this.opSWC1.bind(this);
+        this.opTable[0x3A] = (i, pc) => (pc + 4) | 0; // SWC2 NOP
+        this.opTable[0x3C] = this.opSCD.bind(this);
+        this.opTable[0x3D] = this.opSDC1.bind(this);
+        this.opTable[0x3E] = (i, pc) => (pc + 4) | 0; // SDC2 NOP
+        this.opTable[0x3F] = this.opSD.bind(this);
+
+        // SPECIAL Table (func)
+        this.specialTable[0x00] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 16) & 0x1F] << ((i >> 6) & 0x1F)) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x01] = (i) => { if (((i >> 16) & 1) === (((this.fcr31 & 0x00800000) ? 1 : 0))) { const d = (i >> 11) & 0x1F, sR = (i >> 21) & 0x1F; this.gpr[d] = this.gpr[sR]; this.gprHi[d] = this.gprHi[sR]; } };
+        this.specialTable[0x02] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 16) & 0x1F] >>> ((i >> 6) & 0x1F)) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x03] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 16) & 0x1F] >> ((i >> 6) & 0x1F)) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x04] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 16) & 0x1F] << (this.gpr[(i >> 21) & 0x1F] & 0x1F)) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x06] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 16) & 0x1F] >>> (this.gpr[(i >> 21) & 0x1F] & 0x1F)) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x07] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 16) & 0x1F] >> (this.gpr[(i >> 21) & 0x1F] & 0x1F)) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x08] = (i) => { this.branchTarget = this.gpr[(i >> 21) & 0x1F]; this.branchTaken = true; };
+        this.specialTable[0x09] = (i, pc) => { const d = (i >> 11) & 0x1F; this.branchTarget = this.gpr[(i >> 21) & 0x1F]; const v = (pc + 8) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; this.branchTaken = true; };
+        this.specialTable[0x0A] = (i) => { if (this.gpr[(i >> 16) & 0x1F] === 0) { const d = (i >> 11) & 0x1F, sR = (i >> 21) & 0x1F; this.gpr[d] = this.gpr[sR]; this.gprHi[d] = this.gprHi[sR]; } };
+        this.specialTable[0x0B] = (i) => { if (this.gpr[(i >> 16) & 0x1F] !== 0) { const d = (i >> 11) & 0x1F, sR = (i >> 21) & 0x1F; this.gpr[d] = this.gpr[sR]; this.gprHi[d] = this.gprHi[sR]; } };
+        this.specialTable[0x0C] = (i, pc, ds) => this.raiseException(8, pc, ds);
+        this.specialTable[0x0D] = (i, pc, ds) => this.raiseException(9, pc, ds);
+        this.specialTable[0x0E] = (i, pc) => (pc + 4) | 0; // SYNC NOP
+        this.specialTable[0x0F] = (i, pc) => (pc + 4) | 0; // SYNC NOP
+        this.specialTable[0x10] = (i) => { const d = (i >> 11) & 0x1F; this.gpr[d] = this.hi | 0; this.gprHi[d] = this.hiH | 0; };
+        this.specialTable[0x11] = (i) => { const sR = (i >> 21) & 0x1F; this.hi = this.gpr[sR] | 0; this.hiH = this.gprHi[sR] | 0; };
+        this.specialTable[0x12] = (i) => { const d = (i >> 11) & 0x1F; this.gpr[d] = this.lo | 0; this.gprHi[d] = this.loH | 0; };
+        this.specialTable[0x13] = (i) => { const sR = (i >> 21) & 0x1F; this.lo = this.gpr[sR] | 0; this.loH = this.gprHi[sR] | 0; };
+        this.specialTable[0x14] = (i) => { const s = this.gpr[(i >> 21) & 0x1F] & 0x3F; this._setReg64((i >> 11) & 0x1F, BigInt.asUintN(64, this._reg64((i >> 16) & 0x1F) << BigInt(s))); };
+        this.specialTable[0x16] = (i) => { const s = this.gpr[(i >> 21) & 0x1F] & 0x3F; this._setReg64((i >> 11) & 0x1F, this._reg64((i >> 16) & 0x1F) >> BigInt(s)); };
+        this.specialTable[0x17] = (i) => { const s = this.gpr[(i >> 21) & 0x1F] & 0x3F; this._setReg64((i >> 11) & 0x1F, BigInt.asIntN(64, this._reg64((i >> 16) & 0x1F)) >> BigInt(s)); };
+        // MULT (signed 32x32→64): use Math.imul for lo, BigInt locally for hi only
+        this.specialTable[0x18] = (i) => { const a = this.gpr[(i >> 21) & 0x1F], b = this.gpr[(i >> 16) & 0x1F]; this.lo = Math.imul(a, b) | 0; const r = BigInt(a) * BigInt(b); this.hi = Number(BigInt.asIntN(32, r >> 32n)) | 0; this.loH = this.lo >> 31; this.hiH = this.hi >> 31; };
+        // MULTU (unsigned 32x32→64)
+        this.specialTable[0x19] = (i) => { const a = this.gpr[(i >> 21) & 0x1F] >>> 0, b = this.gpr[(i >> 16) & 0x1F] >>> 0; this.lo = Math.imul(a, b) | 0; const r = BigInt(a) * BigInt(b); this.hi = Number(BigInt.asIntN(32, r >> 32n)) | 0; this.loH = this.lo >> 31; this.hiH = this.hi >> 31; };
+        // DIV (signed)
+        this.specialTable[0x1A] = (i) => { const a = this.gpr[(i >> 21) & 0x1F] | 0, b = this.gpr[(i >> 16) & 0x1F] | 0; if (b !== 0) { this.lo = Math.trunc(a / b) | 0; this.hi = (a % b) | 0; this.loH = this.lo >> 31; this.hiH = this.hi >> 31; } };
+        // DIVU (unsigned)
+        this.specialTable[0x1B] = (i) => { const a = this.gpr[(i >> 21) & 0x1F] >>> 0, b = this.gpr[(i >> 16) & 0x1F] >>> 0; if (b !== 0) { this.lo = Math.trunc(a / b) | 0; this.hi = (a % b) | 0; this.loH = this.lo >> 31; this.hiH = this.hi >> 31; } };
+        // DMULT/DMULTU/DDIV/DDIVU (64-bit ops, rare in SM64 32-bit mode — keep BigInt for correctness)
+        // DMULT: signed 64x64 -> 128-bit, low 64 in LO, high 64 in HI.
+        this.specialTable[0x1C] = (i) => { const p = BigInt.asIntN(64, this._reg64((i >> 21) & 0x1F)) * BigInt.asIntN(64, this._reg64((i >> 16) & 0x1F)); this._setLO(p); this._setHI(p >> 64n); };
+        // DMULTU: unsigned 64x64 -> 128-bit.
+        this.specialTable[0x1D] = (i) => { const p = this._reg64((i >> 21) & 0x1F) * this._reg64((i >> 16) & 0x1F); this._setLO(p); this._setHI(p >> 64n); };
+        // DDIV: signed 64-bit divide; quotient in LO, remainder in HI.
+        this.specialTable[0x1E] = (i) => { const a = BigInt.asIntN(64, this._reg64((i >> 21) & 0x1F)), b = BigInt.asIntN(64, this._reg64((i >> 16) & 0x1F)); if (b !== 0n) { this._setLO(a / b); this._setHI(a % b); } };
+        // DDIVU: unsigned 64-bit divide.
+        this.specialTable[0x1F] = (i) => { const a = this._reg64((i >> 21) & 0x1F), b = this._reg64((i >> 16) & 0x1F); if (b !== 0n) { this._setLO(a / b); this._setHI(a % b); } };
+        this.specialTable[0x20] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 21) & 0x1F] + this.gpr[(i >> 16) & 0x1F]) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x21] = this.specialTable[0x20];
+        this.specialTable[0x22] = (i) => { const d = (i >> 11) & 0x1F; const v = (this.gpr[(i >> 21) & 0x1F] - this.gpr[(i >> 16) & 0x1F]) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; };
+        this.specialTable[0x23] = this.specialTable[0x22];
+        this.specialTable[0x24] = (i) => { const d = (i >> 11) & 0x1F, a = (i >> 21) & 0x1F, b = (i >> 16) & 0x1F; this.gpr[d] = this.gpr[a] & this.gpr[b]; this.gprHi[d] = this.gprHi[a] & this.gprHi[b]; };
+        this.specialTable[0x25] = (i) => { const d = (i >> 11) & 0x1F, a = (i >> 21) & 0x1F, b = (i >> 16) & 0x1F; this.gpr[d] = this.gpr[a] | this.gpr[b]; this.gprHi[d] = this.gprHi[a] | this.gprHi[b]; };
+        this.specialTable[0x26] = (i) => { const d = (i >> 11) & 0x1F, a = (i >> 21) & 0x1F, b = (i >> 16) & 0x1F; this.gpr[d] = this.gpr[a] ^ this.gpr[b]; this.gprHi[d] = this.gprHi[a] ^ this.gprHi[b]; };
+        this.specialTable[0x27] = (i) => { const d = (i >> 11) & 0x1F, a = (i >> 21) & 0x1F, b = (i >> 16) & 0x1F; this.gpr[d] = ~(this.gpr[a] | this.gpr[b]); this.gprHi[d] = ~(this.gprHi[a] | this.gprHi[b]); };
+        this.specialTable[0x2A] = (i) => { const d = (i >> 11) & 0x1F; this.gpr[d] = (this.gpr[(i >> 21) & 0x1F] < this.gpr[(i >> 16) & 0x1F]) ? 1 : 0; this.gprHi[d] = 0; };
+        this.specialTable[0x2B] = (i) => { const d = (i >> 11) & 0x1F; this.gpr[d] = ((this.gpr[(i >> 21) & 0x1F] >>> 0) < (this.gpr[(i >> 16) & 0x1F] >>> 0)) ? 1 : 0; this.gprHi[d] = 0; };
+        this.specialTable[0x2C] = (i) => { this._setReg64((i >> 11) & 0x1F, this._reg64((i >> 21) & 0x1F) + this._reg64((i >> 16) & 0x1F)); }; // DADD (overflow trap ignored)
+        this.specialTable[0x2D] = (i) => { this._setReg64((i >> 11) & 0x1F, this._reg64((i >> 21) & 0x1F) + this._reg64((i >> 16) & 0x1F)); }; // DADDU
+        this.specialTable[0x2E] = (i) => { this._setReg64((i >> 11) & 0x1F, this._reg64((i >> 21) & 0x1F) - this._reg64((i >> 16) & 0x1F)); }; // DSUB (overflow trap ignored)
+        this.specialTable[0x2F] = (i) => { this._setReg64((i >> 11) & 0x1F, this._reg64((i >> 21) & 0x1F) - this._reg64((i >> 16) & 0x1F)); }; // DSUBU
+        this.specialTable[0x30] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] >= this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x31] = (i, pc, ds) => { if ((this.gpr[(i >> 21) & 0x1F] >>> 0) >= (this.gpr[(i >> 16) & 0x1F] >>> 0)) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x32] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] < this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x33] = (i, pc, ds) => { if ((this.gpr[(i >> 21) & 0x1F] >>> 0) < (this.gpr[(i >> 16) & 0x1F] >>> 0)) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x34] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] === this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x36] = (i, pc, ds) => { if (this.gpr[(i >> 21) & 0x1F] !== this.gpr[(i >> 16) & 0x1F]) return this.raiseException(13, pc, ds); };
+        this.specialTable[0x38] = (i) => { const s = (i >> 6) & 0x1F; this._setReg64((i >> 11) & 0x1F, BigInt.asUintN(64, this._reg64((i >> 16) & 0x1F) << BigInt(s))); };
+        this.specialTable[0x3A] = (i) => { const s = (i >> 6) & 0x1F; this._setReg64((i >> 11) & 0x1F, this._reg64((i >> 16) & 0x1F) >> BigInt(s)); };
+        this.specialTable[0x3B] = (i) => { const s = (i >> 6) & 0x1F; this._setReg64((i >> 11) & 0x1F, BigInt.asIntN(64, this._reg64((i >> 16) & 0x1F)) >> BigInt(s)); };
+        this.specialTable[0x3C] = (i) => { const s = ((i >> 6) & 0x1F) + 32; this._setReg64((i >> 11) & 0x1F, BigInt.asUintN(64, this._reg64((i >> 16) & 0x1F) << BigInt(s))); };
+        this.specialTable[0x3E] = (i) => { const s = ((i >> 6) & 0x1F) + 32; this._setReg64((i >> 11) & 0x1F, this._reg64((i >> 16) & 0x1F) >> BigInt(s)); };
+        this.specialTable[0x3F] = (i) => { const s = ((i >> 6) & 0x1F) + 32; this._setReg64((i >> 11) & 0x1F, BigInt.asIntN(64, this._reg64((i >> 16) & 0x1F)) >> BigInt(s)); };
+    }
+
+    opInvalid(i, pc, ds) { return this.raiseException(10, pc, ds); }
+
+    reset() {
+        this.fetchPage = -1;
+        this.fetchView = null;
+        this.instructionCount = 0;
+        this.pcHistory = new Uint32Array(100);
+        this.pcHistoryIdx = 0;
+        this.gpr = new Int32Array(32);
+        // Upper 32 bits of each 64-bit GPR. Only meaningful for verbatim ld/sd
+        // doubleword copies (e.g. OS thread-context save/restore); every other
+        // operation uses the low 32 bits in this.gpr as the register value.
+        this.gprHi = new Int32Array(32);
+        this.fprBuffer = new ArrayBuffer(32 * 8);
+        this.fprView = new DataView(this.fprBuffer);
+        this.fcr0 = 0x00000510;
+        this.fcr31 = 0;
+        this.pc = 0xBFC00000 | 0;
+        this.cp0Registers = new Int32Array(32);
+        this.cp0Registers[1] = 0x1F; // Random
+        this.cp0Registers[4] = 0x007FFFF0; // Context
+        this.cp0Registers[8] = -1; // BadVAddr (0xFFFFFFFF)
+        this.cp0Registers[12] = 0x34000000; // Status (BEV|ERL)
+        this.cp0Registers[14] = -1; // EPC (0xFFFFFFFF)
+        this.cp0Registers[15] = 0x00000B22; // PRId
+        this.cp0Registers[16] = 0x0006E463; // Config
+        this.cp0Registers[30] = -1; // ErrorEPC (0xFFFFFFFF)
+        // TLB: 32 entries. Used by goddard (Mario-head renderer) which osMapTLB's
+        // virtual 0x04000000+ (64K pages) onto physical RDRAM. Without translation
+        // those reads hit SP DMEM garbage and goddard panics ("not a valid dyn list").
+        this.tlbEntries = new Array(32);
+        for (let i = 0; i < 32; i++) this.tlbEntries[i] = { pageMask: 0, entryHi: 0, entryLo0: 0, entryLo1: 0 };
+        this.hi = 0;
+        this.lo = 0;
+        this.hiH = 0; // high 32 bits of HI (HI/LO are 64-bit MIPS registers)
+        this.loH = 0; // high 32 bits of LO
+        // CP0 Compare/Count timer: armed when the game writes Compare. Fires when
+        // Count reaches OR passes Compare (edge-crossing) instead of requiring exact
+        // equality. The OS often programs Compare a few counts behind the live Count
+        // (it reads Count, then runs a handful of instructions before writing Compare);
+        // exact-equality would only fire after a full 2^32 wrap, i.e. effectively never.
+        this._compareArmed = false;
+        this._lastFiredCompare = -1; // Compare value already serviced (avoids re-fire on clear-by-rewrite)
+        this.gpr[0] = 0;
+        this.isRunning = false;
+        this.branchTaken = false;
+        this.branchTarget = 0;
+        this.isHleBootDone = false;
+        this.exceptionRaised = false;
+        this.debug = false;
+    }
+
+    run() {
+        if (this.isRunning) return;
+        this.isRunning = true;
+        if (!this.isHleBootDone) this.performHleBoot();
+
+        const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+            ? () => performance.now()
+            : () => Date.now();
+
+        const runLoop = () => {
+            if (!this.isRunning) return;
+            // Audio-master sync (Task #42): the host audio sink reports its buffer
+            // fill; while it has >~160ms banked we pause stepping, locking the
+            // game's production rate to real-time consumption. No count<->wall
+            // calibration (the emulator's approximated DMA/timer durations are NOT
+            // consistent with the audio-chain count rate, so a global counts/sec
+            // throttle stalls boot) — boot and pre-audio phases run unthrottled.
+            if (this.hostThrottle && this.hostThrottle()) { setTimeout(runLoop, 4); return; }
+            const sliceStart = now();
+            const maxStepsPerSlice = 250000;
+            const maxSliceMs = 8;
+            let steps = 0;
+
+            while (steps < maxStepsPerSlice) {
+                this.step();
+                steps++;
+                if ((steps & 0x3FF) === 0 && (now() - sliceStart) >= maxSliceMs) {
+                    break;
+                }
+            }
+            scheduleNext();
+        };
+        // Browser: nested setTimeout(0) is clamped to >=4ms after a few frames,
+        // capping a 8ms-slice loop at ~50% duty cycle. MessageChannel posts run
+        // immediately (Task #40). Node/tests keep setTimeout.
+        let scheduleNext;
+        if (typeof MessageChannel !== 'undefined') {
+            const ch = new MessageChannel();
+            ch.port1.onmessage = runLoop;
+            scheduleNext = () => ch.port2.postMessage(0);
+        } else {
+            scheduleNext = () => setTimeout(runLoop, 0);
+        }
+        runLoop();
+    }
+
+    getCrc32Table() {
+        if (CPU.crc32Table) return CPU.crc32Table;
+        const table = new Uint32Array(256);
+        for (let i = 0; i < 256; i++) {
+            let c = i;
+            for (let j = 0; j < 8; j++) {
+                c = (c & 1) ? ((0xEDB88320 ^ (c >>> 1)) >>> 0) : (c >>> 1);
+            }
+            table[i] = c >>> 0;
+        }
+        CPU.crc32Table = table;
+        return table;
+    }
+
+    computeCrc32(bytes, start, end) {
+        const table = this.getCrc32Table();
+        let crc = 0xFFFFFFFF;
+        for (let i = start; i < end; i++) {
+            crc = table[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+        }
+        return (crc ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    detectCic(romView) {
+        const crc = this.computeCrc32(romView, 0x40, Math.min(romView.length, 0x1000));
+        switch (crc) {
+            case 0x6170A4A1: return { seed: 0x3F, name: 'CIC-NUS-6101', crc };
+            case 0x90BB6CB5: return { seed: 0x3F, name: 'CIC-NUS-6102', crc };
+            case 0x0B050EE0: return { seed: 0x78, name: 'CIC-NUS-6103', crc };
+            case 0x98BC2C86: return { seed: 0x91, name: 'CIC-NUS-6105', crc };
+            case 0xACC8580A: return { seed: 0x85, name: 'CIC-NUS-6106', crc };
+            default: return { seed: 0x3F, name: 'CIC-NUS-6102*', crc };
+        }
+    }
+
+    performHleBoot() {
+        const memory = this.mmu.memory;
+        if (!memory.rom) return;
+
+        const romView = new Uint8Array(memory.rom);
+        const cic = this.detectCic(romView);
+
+        // Read game entry point from ROM header (offset 8, big-endian).
+        const entryPoint = (
+            (romView[0x08] << 24) |
+            (romView[0x09] << 16) |
+            (romView[0x0A] << 8)  |
+            (romView[0x0B])
+        ) >>> 0;
+
+        // Determine where IPL3 would have loaded the game code.
+        // Almost all CICs load to entry_point; CIC-6103/7103 loads to entry_point - 0x100000.
+        // Loaded image is ROM[0x1000..0x101000] (1 MB).
+        let loadAddr = entryPoint >>> 0;
+        if (cic.name.indexOf('6103') >= 0 || cic.name.indexOf('7103') >= 0) {
+            loadAddr = (entryPoint - 0x00100000) >>> 0;
+        }
+        const loadPhys = loadAddr & 0x1FFFFFFF; // virtual -> physical
+        const ramSize = memory.rdram.byteLength;
+        const copyBytes = Math.min(0x100000, romView.length - 0x1000, ramSize - loadPhys);
+        if (copyBytes > 0) {
+            const dst = new Uint8Array(memory.rdram, loadPhys, copyBytes);
+            dst.set(romView.subarray(0x1000, 0x1000 + copyBytes));
+        }
+
+        // Patch any pre-initialized thread TCB whose SR field was baked into the ROM with a
+        // broken value (0x2 = EXL only, no IE).  When the OS interrupt handler restores that
+        // thread's Status register via MTC0 and then executes ERET, EXL is cleared and the
+        // result is Status=0 — completely disabling future interrupts and freezing the game.
+        // We scan the load region for this pattern and replace it with a value that has IE=1
+        // and all hardware-interrupt-mask bits set (0xFF01) so the scheduler can receive VI
+        // interrupts after a context switch to this thread.
+        // SM64 EU: TCB at 0x80302ef0, SR field at +0x118 = physical 0x303008.
+        if (memory.rdram.byteLength >= 4) {
+            const rdramFixView = new DataView(memory.rdram);
+            const patchAddrs = [0x303008]; // known pre-initialized TCB SR physical addresses
+            for (const pAddr of patchAddrs) {
+                if (pAddr >= loadPhys && pAddr + 4 <= loadPhys + copyBytes && pAddr + 4 <= memory.rdram.byteLength) {
+                    const sr = rdramFixView.getUint32(pAddr, false);
+                    if (sr === 0x00000002) {
+                        // Replace EXL-only value with IE=1 + all IM bits so interrupts stay enabled
+                        rdramFixView.setUint32(pAddr, 0x0000FF01, false);
+                        console.log(`HLE: patched pre-init TCB SR at phys 0x${pAddr.toString(16)}: 0x2 → 0xFF01`);
+                    }
+                }
+            }
+        }
+
+        // Simulate PIF / IPL3 post-boot CPU state.
+        this.gpr.fill(0);
+        // Default register values after a real boot (CIC-NUS-6102 NTSC):
+        this.gpr[1] = 1; // 0x0000000000000001 // at
+        this.gpr[2] = 247309622; // 0x000000000EBDA536 // v0
+        this.gpr[3] = 247309622; // 0x000000000EBDA536 // v1
+        this.gpr[4] = 42294; // 0x000000000000A536 // a0
+        this.gpr[5] = -1057892263; // 0xFFFFFFFFC0F1D859 // a1
+        this.gpr[6] = -1543495924; // 0xFFFFFFFFA4001F0C // a2
+        this.gpr[7] = -1543495928; // 0xFFFFFFFFA4001F08 // a3
+        this.gpr[8] = 192; // 0x00000000000000C0 // t0
+        this.gpr[10] = 64; // 0x0000000000000040 // t2
+        this.gpr[11] = -1543503808; // 0xFFFFFFFFA4000040 // t3
+        this.gpr[12] = -317665101; // 0xFFFFFFFFED10D0B3 // t4
+        this.gpr[13] = 335717580; // 0x000000001402A4CC // t5
+        this.gpr[14] = 769722602; // 0x000000002DE108EA // t6
+        this.gpr[15] = 822337825; // 0x000000003103E121 // t7
+        this.gpr[20] = 1; // s4 - TV type (1 = PAL on Euro carts; 0 = NTSC)
+        this.gpr[22] = cic.seed & 0xFF; // s6 (CIC seed)
+        this.gpr[23] = 0; // s7
+        this.gpr[25] = -1645497009; // 0xFFFFFFFF9DEBB54F // t9
+        this.gpr[29] = -1543495696; // 0xFFFFFFFFA4001FF0 // sp
+        this.gpr[31] = -1543498416; this.gprHi[31] = -1; // 0xFFFFFFFFA4001550 // ra
+
+        // CIC-specific tweaks per real-hardware traces.
+        if (cic.name.indexOf('6101') >= 0) {
+            this.gpr[20] = 1;
+            this.gpr[27] = -1918367748; // 0xFFFFFFFF8DA807FC // k1
+        } else if (cic.name.indexOf('6103') >= 0 || cic.name.indexOf('7103') >= 0) {
+            this.gpr[20] = 0;
+            this.gpr[17] = -731618701; // 0xFFFFFFFFD4646273 // s1 (CIC-6103 marker)
+            this.gpr[27] = -731618701; // 0xFFFFFFFFD4646273 // k1
+        } else if (cic.name.indexOf('6105') >= 0) {
+            this.gpr[20] = 0;
+            this.gpr[31] = -1543498416; this.gprHi[31] = -1; // 0xFFFFFFFFA4001550 // ra
+        } else if (cic.name.indexOf('6106') >= 0) {
+            this.gpr[20] = 0;
+            this.gpr[31] = -1543498412; this.gprHi[31] = -1; // 0xFFFFFFFFA4001554 // ra
+        }
+
+        // CP0 register state after real PIF / IPL3.
+        this.cp0Registers[1]  = 0x0000001F; // Random
+        this.cp0Registers[9]  = 0x00000000; // Count
+        this.cp0Registers[11] = 0x00000000; // Compare (disabled until game programs it)
+        this.cp0Registers[12] = 0x34000000; // Status (BEV|ERL set, IE=0)
+        this.cp0Registers[13] = 0x00000000; // Cause (no pending interrupts)
+        this.cp0Registers[14] = -1; // EPC (0xFFFFFFFF)
+        this.cp0Registers[15] = 0x00000B22; // PRId
+        this.cp0Registers[16] = 0x7006E463 | 0; // Config (matches real boot)
+        this.cp0Registers[30] = -1; // ErrorEPC (0xFFFFFFFF)
+
+        // Place a copy of IPL3 in DMEM (some games read from DMEM during early init).
+        this.mmu.spDmem.fill(0);
+        const dmemCopyLen = Math.min(0x1000, romView.length, this.mmu.spDmem.length);
+        this.mmu.spDmem.set(romView.subarray(0, dmemCopyLen), 0);
+
+        // PIF RAM seed bytes (used by CIC challenge later).
+        this.mmu.pifRam.fill(0);
+        this.mmu.pifRam[0x24] = 0x00;
+        this.mmu.pifRam[0x25] = 0x02;
+        this.mmu.pifRam[0x26] = cic.seed & 0xFF;
+        this.mmu.pifRam[0x27] = 0x3F;
+        this.mmu.pifRam[0x3F] = 0x80; // PIF ready
+        // SP HALT so RSP doesn't run anything before the game sets up a task.
+        this.mmu.spRegisters[4] = 0x00000001;
+
+        // Pre-initialize VI registers so VI interrupts begin firing before the game writes
+        // VI_V_SYNC.  On a real N64 the VI is idle until the game programs it, but in our HLE
+        // boot the game's video-init code may never run if VI interrupts are required first
+        // (chicken-and-egg deadlock via the OS scheduler).  We set the PAL VI_V_SYNC (0x271 =
+        // 625 lines) and schedule the first interrupt at a small cycle offset.  When the game
+        // later writes its own VI_V_SYNC the write handler will update the cadence correctly.
+        if (this.mmu.viRegisters[6] === 0) {
+            const isPal = (this.gpr[20] === 1); // s4 = TV type: 1=PAL, 0=NTSC
+            const vSync = isPal ? 0x271 : 0x20D; // PAL 625-line or NTSC 525-line
+            this.mmu.viRegisters[6] = vSync;
+            // First interrupt fires after a short startup delay (~5 frames worth of cycles)
+            this.mmu.viNextInterrupt = isPal ? (5 * 1875000) : (5 * 1562500);
+            console.log(`HLE: pre-initialized VI_V_SYNC=0x${vSync.toString(16)} (${isPal ? 'PAL' : 'NTSC'}), first VI interrupt in ${this.mmu.viNextInterrupt} cycles`);
+        }
+
+        // Jump straight to the game entry point.
+        this.pc = entryPoint | 0;
+        this.invalidateCache();
+
+        this.isHleBootDone = true;
+        console.log(`HLE Boot Done. ${cic.name} seed=0x${cic.seed.toString(16)} crc=0x${cic.crc.toString(16)} entry=0x${entryPoint.toString(16)} loaded=${copyBytes}B@0x${loadAddr.toString(16)}`);
+    }
+
+    readInstructionWord(pc) {
+        const pcNum = Number(pc >>> 0);
+        const physPc = (pcNum >= 0x80000000 && pcNum <= 0xBFFFFFFF) ? (pcNum & 0x1FFFFFFF) : pcNum;
+
+        if (physPc <= 0x7FFFFF) {
+            const page = physPc >>> 12;
+            if (page !== this.fetchPage) {
+                this.fetchPage = page;
+                this.fetchView = new DataView(this.mmu.memory.rdram, page << 12, 4096);
+            }
+            return this.fetchView.getUint32(physPc & 0xFFF, false);
+        }
+        return this.mmu.read32(physPc);
+    }
+
+    // Raise the CP0 timer interrupt (IP7 / CAUSE 0x8000) when Count has reached or
+    // just passed Compare. Signed delta with a forward window: a Compare set slightly
+    // behind the live Count still fires promptly, while a Compare far ahead waits.
+    serviceCompareTimer() {
+        if (!this._compareArmed || this.cp0Registers[11] === 0) return;
+        const diff = (this.cp0Registers[9] - this.cp0Registers[11]) | 0; // signed
+        if (diff >= 0 && diff < 0x10000000) {
+            this.cp0Registers[13] |= 0x00008000; // Timer interrupt (IP7)
+            this._compareArmed = false;
+            this._lastFiredCompare = this.cp0Registers[11] | 0;
+        }
+    }
+
+    tryFastForwardIdleLoop(status, cause) {
+        if (!(status & 1) || (status & 2) || (status & 4)) return false;
+        if (((status >> 8) & (cause >> 8) & 0xFF) !== 0) return false;
+
+        // Caller (step) only invokes this when the fetched instruction is the canonical
+        // idle spin (0x1000FFFF) and pc is aligned, so we skip re-fetching here.
+        const now = this.instructionCount;
+        let nextEvent = Number.MAX_SAFE_INTEGER;
+        const pi = this.mmu.piBusyUntil; if (typeof pi === 'number' && pi > now && pi < nextEvent) nextEvent = pi;
+        const si = this.mmu.siBusyUntil; if (typeof si === 'number' && si > now && si < nextEvent) nextEvent = si;
+        const ai = this.mmu.aiBusyUntil; if (typeof ai === 'number' && ai > now && ai < nextEvent) nextEvent = ai;
+        if ((this.mmu.viRegisters[6] >>> 0) !== 0) {
+            const vi = this.mmu.viNextInterrupt; if (typeof vi === 'number' && vi > now && vi < nextEvent) nextEvent = vi;
+        }
+
+        const compare = this.cp0Registers[11] >>> 0;
+        if (compare !== 0) {
+            const count = this.cp0Registers[9] >>> 0;
+            let deltaCount = (compare - count) >>> 0;
+            if (deltaCount === 0) deltaCount = 1;
+            const ev = now + deltaCount * 2; if (ev > now && ev < nextEvent) nextEvent = ev;
+        }
+
+        if (!Number.isFinite(nextEvent) || nextEvent <= now) return false;
+
+        const skipped = nextEvent - now;
+        if (skipped > 0) {
+            const countInc = (now & 1) ? ((skipped + 1) >> 1) : (skipped >> 1);
+            if (countInc > 0) {
+                this.cp0Registers[9] = (this.cp0Registers[9] + countInc) | 0;
+            }
+        }
+
+        this.instructionCount = nextEvent;
+        this.mmu.checkInternalEvents();
+
+        const miIntr = this.mmu.miRegisters[2];
+        const miMask = this.mmu.miRegisters[3];
+        if (miIntr & miMask) this.cp0Registers[13] |= 0x00000400;
+        else this.cp0Registers[13] &= ~0x00000400;
+
+        this.serviceCompareTimer();
+
+        return true;
+    }
+
+    step() {
+        if (this.debug) {
+            this.pcHistory[this.pcHistoryIdx] = this.pc;
+            this.pcHistoryIdx = (this.pcHistoryIdx + 1) % 100;
+            if ((this.instructionCount % 5000000) === 0) {
+                console.log(`CPU Status: PC=0x${this.pc.toString(16)} Instructions=${this.instructionCount}`);
+                let history = [];
+                for (let i = 0; i < 20; i++) {
+                    history.push(this.pcHistory[(this.pcHistoryIdx + i + 80) % 100].toString(16));
+                }
+                console.log("Recent PC History:", history);
+            }
+        }
+
+        this.instructionCount++;
+        this.gpr[0] = 0;
+
+        // CP0 Count register (half frequency)
+        if ((this.instructionCount & 1) === 0) {
+            this.cp0Registers[9] = (this.cp0Registers[9] + 1) | 0;
+            this.serviceCompareTimer();
+        }
+
+        // Hardware events and interrupts
+        if ((this.instructionCount & 0x7F) === 0) this.mmu.checkInternalEvents();
+
+        const miIntr = this.mmu.miRegisters[2];
+        const miMask = this.mmu.miRegisters[3];
+        if (miIntr & miMask) {
+            this.cp0Registers[13] |= 0x00000400;
+        } else {
+            this.cp0Registers[13] &= ~0x00000400;
+        }
+
+        const status = this.cp0Registers[12];
+        const cause = this.cp0Registers[13];
+        if ((status & 1) && !(status & 2) && !(status & 4) && ((status >> 8) & (cause >> 8) & 0xFF)) {
+            this.raiseException(0, this.pc, false);
+        }
+
+        const currentPc = this.pc;
+        if (currentPc & 3) {
+            this.raiseException(4, currentPc, false);
+            return;
+        }
+
+        const instruction = this.readInstructionWord(currentPc);
+        // Idle fast-forward only matters for the canonical idle spin `beq $zero,$zero,-1`.
+        // Gate the whole (relatively expensive) check behind that single comparison so the
+        // overwhelming majority of non-idle instructions skip it entirely, and reuse the
+        // instruction word we just fetched instead of fetching it a second time.
+        if (instruction === 0x1000FFFF && this.tryFastForwardIdleLoop(status, cause)) return;
+        this.exceptionRaised = false;
+
+        const nextPc = this.decodeAndExecute(instruction, currentPc, false);
+        if (this.exceptionRaised || nextPc === null) return;
+
+        if (this.branchTaken) {
+            const ds = this.readInstructionWord((currentPc + 4) | 0);
+            this.decodeAndExecute(ds, (currentPc + 4) | 0, true);
+            if (this.exceptionRaised) return;
+            this.pc = this.branchTarget | 0;
+            this.branchTaken = false;
+        } else {
+            this.pc = nextPc | 0;
+        }
+    }
+
+    decodeAndExecute(instruction, currentPc, isDelaySlot) {
+        const opcode = (instruction >>> 26) & 0x3F;
+        const res = this.opTable[opcode](instruction, currentPc, isDelaySlot);
+        if (res !== undefined) return res;
+        return (currentPc + 4) | 0;
+    }
+
+    opBEQL(i, pc, ds) {
+        const rs = (i >> 21) & 0x1F, rt = (i >> 16) & 0x1F;
+        const imm = ((i << 16) >> 16);
+        if (this.gpr[rs] === this.gpr[rt]) {
+            this.branchTarget = ((pc + 4) + (imm << 2)) | 0;
+            this.branchTaken = true;
+            return (pc + 4) | 0;
+        }
+        return (pc + 8) | 0;
+    }
+
+    opBNEL(i, pc, ds) {
+        const rs = (i >> 21) & 0x1F, rt = (i >> 16) & 0x1F;
+        const imm = ((i << 16) >> 16);
+        if (this.gpr[rs] !== this.gpr[rt]) {
+            this.branchTarget = ((pc + 4) + (imm << 2)) | 0;
+            this.branchTaken = true;
+            return (pc + 4) | 0;
+        }
+        return (pc + 8) | 0;
+    }
+
+    opBLEZL(i, pc, ds) {
+        const rs = (i >> 21) & 0x1F;
+        const imm = ((i << 16) >> 16);
+        if (this.gpr[rs] <= 0) {
+            this.branchTarget = ((pc + 4) + (imm << 2)) | 0;
+            this.branchTaken = true;
+            return (pc + 4) | 0;
+        }
+        return (pc + 8) | 0;
+    }
+
+    opBGTZL(i, pc, ds) {
+        const rs = (i >> 21) & 0x1F;
+        const imm = ((i << 16) >> 16);
+        if (this.gpr[rs] > 0) {
+            this.branchTarget = ((pc + 4) + (imm << 2)) | 0;
+            this.branchTaken = true;
+            return (pc + 4) | 0;
+        }
+        return (pc + 8) | 0;
+    }
+
+    opSPECIAL2(i, pc, ds) {
+        if ((i & 0x3F) === 0x02) { // MUL
+            const rs = (i >> 21) & 0x1F, rt = (i >> 16) & 0x1F, rd = (i >> 11) & 0x1F;
+            this.gpr[rd] = Math.imul(this.gpr[rs], this.gpr[rt]) | 0;
+        }
+        return (pc + 4) | 0;
+    }
+
+    opSPECIAL(i, pc, ds) {
+        const f = i & 0x3F;
+        const res = this.specialTable[f](i, pc, ds);
+        if (res !== undefined) return res;
+        return (pc + 4) | 0;
+    }
+
+    opREGIMM(i, pc, ds) {
+        const s = (i >> 16) & 0x1F;
+        const res = this.regimmTable[s](i, pc, ds);
+        if (res !== undefined) return res;
+        return (pc + 4) | 0;
+    }
+
+    opJ(i, pc, ds) { this.branchTarget = ((pc & 0xF0000000) | ((i & 0x03FFFFFF) << 2)) | 0; this.branchTaken = true; return (pc + 4) | 0; }
+    opJAL(i, pc, ds) { this.gpr[31] = (pc + 8) | 0; return this.opJ(i, pc); }
+    opBEQ(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] === this.gpr[(i >> 16) & 0x1F]) {
+            this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0;
+        } else {
+            this.branchTarget = (pc + 8) | 0;
+        }
+        this.branchTaken = true;
+        return (pc + 4) | 0;
+    }
+    opBNE(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] !== this.gpr[(i >> 16) & 0x1F]) {
+            this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0;
+        } else {
+            this.branchTarget = (pc + 8) | 0;
+        }
+        this.branchTaken = true;
+        return (pc + 4) | 0;
+    }
+    opBLEZ(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] <= 0) {
+            this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0;
+        } else {
+            this.branchTarget = (pc + 8) | 0;
+        }
+        this.branchTaken = true;
+        return (pc + 4) | 0;
+    }
+    opBGTZ(i, pc, ds) {
+        if (this.gpr[(i >> 21) & 0x1F] > 0) {
+            this.branchTarget = ((pc + 4) + (((i << 16) >> 16) << 2)) | 0;
+        } else {
+            this.branchTarget = (pc + 8) | 0;
+        }
+        this.branchTaken = true;
+        return (pc + 4) | 0;
+    }
+
+    opADDIU(i) { const d = (i >> 16) & 0x1F; const v = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; }
+    opDADDIU(i) { this._setReg64((i >> 16) & 0x1F, this._reg64((i >> 21) & 0x1F) + BigInt(((i << 16) >> 16))); } // DADDI/DADDIU: full 64-bit, maintains gprHi
+    opSLTI(i) { const d = (i >> 16) & 0x1F; this.gpr[d] = (this.gpr[(i >> 21) & 0x1F] < ((i << 16) >> 16)) ? 1 : 0; this.gprHi[d] = 0; }
+    opSLTIU(i) { const d = (i >> 16) & 0x1F; this.gpr[d] = ((this.gpr[(i >> 21) & 0x1F] >>> 0) < (((i << 16) >> 16) >>> 0)) ? 1 : 0; this.gprHi[d] = 0; }
+    opANDI(i) { const d = (i >> 16) & 0x1F; this.gpr[d] = (this.gpr[(i >> 21) & 0x1F] & (i & 0xFFFF)) | 0; this.gprHi[d] = 0; }
+    opORI(i) { const d = (i >> 16) & 0x1F, sR = (i >> 21) & 0x1F; this.gpr[d] = (this.gpr[sR] | (i & 0xFFFF)) | 0; this.gprHi[d] = this.gprHi[sR]; }
+    opXORI(i) { const d = (i >> 16) & 0x1F, sR = (i >> 21) & 0x1F; this.gpr[d] = (this.gpr[sR] ^ (i & 0xFFFF)) | 0; this.gprHi[d] = this.gprHi[sR]; }
+    opLUI(i) { const d = (i >> 16) & 0x1F; const v = (i & 0xFFFF) << 16; this.gpr[d] = v; this.gprHi[d] = v >> 31; }
+
+    opLB(i) { const d = (i >> 16) & 0x1F; const v = (this.mmu.read8((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0) << 24) >> 24; this.gpr[d] = v; this.gprHi[d] = v >> 31; }
+    opLBU(i) { const d = (i >> 16) & 0x1F; this.gpr[d] = this.mmu.read8((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0) & 0xFF; this.gprHi[d] = 0; }
+    opLH(i) { const d = (i >> 16) & 0x1F; const v = (this.mmu.read16((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0) << 16) >> 16; this.gpr[d] = v; this.gprHi[d] = v >> 31; }
+    opLHU(i) { const d = (i >> 16) & 0x1F; this.gpr[d] = this.mmu.read16((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0) & 0xFFFF; this.gprHi[d] = 0; }
+    opLW(i) { const d = (i >> 16) & 0x1F; const v = this.mmu.read32((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0) | 0; this.gpr[d] = v; this.gprHi[d] = v >> 31; }
+    opLWU(i) { const d = (i >> 16) & 0x1F; this.gpr[d] = this.mmu.read32((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0) | 0; this.gprHi[d] = 0; }
+    opLD(i) { const _rt = (i >> 16) & 0x1F; const _d = this.mmu.read64((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0); this.gprHi[_rt] = Number(_d >> 32n) | 0; this.gpr[_rt] = Number(_d & 0xFFFFFFFFn) | 0; }
+
+    opSB(i) { this.mmu.write8((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0, this.gpr[(i >> 16) & 0x1F] & 0xFF); }
+    opSH(i) { this.mmu.write16((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0, this.gpr[(i >> 16) & 0x1F] & 0xFFFF); }
+    opSW(i) { this.mmu.write32((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0, this.gpr[(i >> 16) & 0x1F] >>> 0); }
+    opSD(i) { const _rt = (i >> 16) & 0x1F; const _sda = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0; this.mmu.write32(_sda, this.gprHi[_rt] >>> 0); this.mmu.write32(_sda + 4, this.gpr[_rt] >>> 0); }
+
+    opLWL(i) {
+        const a = Number((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) >>> 0);
+        const w = this.mmu.read32(a & ~3);
+        const v = Number(this.gpr[(i >> 16) & 0x1F] >>> 0);
+        const s = a & 3;
+        let r;
+        if (s === 0) r = w;
+        else if (s === 1) r = (v & 0xFF) | (w << 8);
+        else if (s === 2) r = (v & 0xFFFF) | (w << 16);
+        else r = (v & 0xFFFFFF) | (w << 24);
+        const dR = (i >> 16) & 0x1F; this.gpr[dR] = r | 0; this.gprHi[dR] = (r | 0) >> 31;
+    }
+
+    opLWR(i) {
+        const a = Number((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) >>> 0);
+        const w = this.mmu.read32(a & ~3);
+        const v = Number(this.gpr[(i >> 16) & 0x1F] >>> 0);
+        const s = a & 3;
+        let r;
+        if (s === 0) r = (v & 0xFFFFFF00) | (w >>> 24);
+        else if (s === 1) r = (v & 0xFFFF0000) | (w >>> 16);
+        else if (s === 2) r = (v & 0xFF000000) | (w >>> 8);
+        else r = w;
+        const dR = (i >> 16) & 0x1F; this.gpr[dR] = r | 0; this.gprHi[dR] = (r | 0) >> 31;
+    }
+
+    opSWL(i) {
+        const a = Number((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) >>> 0);
+        const w = this.mmu.read32(a & ~3);
+        const v = Number(this.gpr[(i >> 16) & 0x1F] >>> 0);
+        const s = a & 3;
+        let r;
+        if (s === 0) r = v;
+        else if (s === 1) r = (w & 0xFF000000) | (v >>> 8);
+        else if (s === 2) r = (w & 0xFFFF0000) | (v >>> 16);
+        else r = (w & 0xFFFFFF00) | (v >>> 24);
+        this.mmu.write32(a & ~3, r >>> 0);
+    }
+
+    opSWR(i) {
+        const a = Number((this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) >>> 0);
+        const w = this.mmu.read32(a & ~3);
+        const v = Number(this.gpr[(i >> 16) & 0x1F] >>> 0);
+        const s = a & 3;
+        let r;
+        if (s === 0) r = (w & 0x00FFFFFF) | (v << 24);
+        else if (s === 1) r = (w & 0x0000FFFF) | (v << 16);
+        else if (s === 2) r = (w & 0x000000FF) | (v << 8);
+        else r = v;
+        this.mmu.write32(a & ~3, r >>> 0);
+    }
+
+    _reg64(r) { return (BigInt(this.gprHi[r] >>> 0) << 32n) | BigInt(this.gpr[r] >>> 0); }
+    // Store a 64-bit BigInt into the LO / HI registers (split into low/high 32-bit words).
+    _setLO(v) { this.lo = Number(BigInt.asIntN(32, v & 0xFFFFFFFFn)) | 0; this.loH = Number(BigInt.asIntN(32, (v >> 32n) & 0xFFFFFFFFn)) | 0; }
+    _setHI(v) { this.hi = Number(BigInt.asIntN(32, v & 0xFFFFFFFFn)) | 0; this.hiH = Number(BigInt.asIntN(32, (v >> 32n) & 0xFFFFFFFFn)) | 0; }
+    _setReg64(r, val) { const m = BigInt.asUintN(64, val); this.gprHi[r] = Number(BigInt.asIntN(32, m >> 32n)) | 0; this.gpr[r] = Number(BigInt.asIntN(32, m & 0xFFFFFFFFn)) | 0; }
+
+    opLDL(i) {
+        const rt = (i >> 16) & 0x1F;
+        const a = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const d = this.mmu.read64(a & ~7);
+        const v = this._reg64(rt);
+        const s = a & 7;
+        this._setReg64(rt, (s === 0) ? d : ((v & ((1n << (BigInt(s) * 8n)) - 1n)) | (d << (BigInt(s) * 8n))));
+    }
+
+    opLDR(i) {
+        const rt = (i >> 16) & 0x1F;
+        const a = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const d = this.mmu.read64(a & ~7);
+        const v = this._reg64(rt);
+        const s = a & 7;
+        this._setReg64(rt, (s === 7) ? d : ((v & ~((1n << (BigInt(7 - s + 1) * 8n)) - 1n)) | (d >> (BigInt(7 - s) * 8n))));
+    }
+
+    opSDL(i) {
+        const a = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const d = this.mmu.read64(a & ~7);
+        const v = this._reg64((i >> 16) & 0x1F);
+        const s = a & 7;
+        this.mmu.write64(a & ~7, (s === 0) ? v : (d & ~((1n << (BigInt(8 - s) * 8n)) - 1n)) | (v >> BigInt(s * 8)));
+    }
+
+    opSDR(i) {
+        const a = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const d = this.mmu.read64(a & ~7);
+        const v = this._reg64((i >> 16) & 0x1F);
+        const s = a & 7;
+        this.mmu.write64(a & ~7, (s === 7) ? v : (d & ((1n << (BigInt(s + 1) * 8n)) - 1n)) | (v << BigInt((7 - s) * 8)));
+    }
+
+    opLL(i) { this.opLW(i); }
+    opLLD(i) { this.opLD(i); }
+    opSC(i) { this.opSW(i); const d = (i >> 16) & 0x1F; this.gpr[d] = 1; this.gprHi[d] = 0; }
+    opSCD(i) { this.opSD(i); const d = (i >> 16) & 0x1F; this.gpr[d] = 1; this.gprHi[d] = 0; }
+
+    getFprAddr32(fs) {
+        const fr = (this.cp0Registers[12] & 0x04000000) !== 0;
+        if (!fr && (fs & 1)) return (fs - 1) * 8; // Upper 32 bits of even register
+        return fs * 8 + 4; // Lower 32 bits
+    }
+
+    opLWC1(i) {
+        const addr = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const fs = (i >> 16) & 0x1F;
+        this.fprView.setUint32(this.getFprAddr32(fs), this.mmu.read32(addr), false);
+    }
+
+    opLDC1(i) {
+        const addr = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const fs = (i >> 16) & 0x1F;
+        this.fprView.setBigUint64(fs * 8, this.mmu.read64(addr), false);
+    }
+
+    opSWC1(i) {
+        const addr = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const fs = (i >> 16) & 0x1F;
+        this.mmu.write32(addr, this.fprView.getUint32(this.getFprAddr32(fs), false));
+    }
+
+    opSDC1(i) {
+        const addr = (this.gpr[(i >> 21) & 0x1F] + ((i << 16) >> 16)) | 0;
+        const fs = (i >> 16) & 0x1F;
+        this.mmu.write64(addr, this.fprView.getBigUint64(fs * 8, false));
+    }
+
+    opCOP1(i, pc, ds) {
+        const sub = (i >> 21) & 0x1F, rt = (i >> 16) & 0x1F, fs = (i >> 11) & 0x1F, fd = (i >> 6) & 0x1F, f = i & 0x3F;
+
+        if (sub === 0x08) { // Branch
+            const c = (this.fcr31 & 0x00800000) !== 0;
+            const t = (i >> 16) & 3;
+            const imm = ((i << 16) >> 16);
+            let tk = (t === 0 && !c) || (t === 1 && c) || (t === 2 && !c) || (t === 3 && c);
+            if (tk) {
+                this.branchTarget = ((pc + 4) + (imm << 2)) | 0;
+                this.branchTaken = true;
+                return (pc + 4) | 0;
+            } else if (t >= 2) { // Likely
+                return (pc + 8) | 0;
+            } else {
+                this.branchTarget = (pc + 8) | 0;
+                this.branchTaken = true;
+                return (pc + 4) | 0;
+            }
+        }
+
+        if (sub === 0x00) { // MFC1: 32-bit move, sign-extend into the 64-bit GPR (maintain gprHi)
+            const v = this.fprView.getInt32(this.getFprAddr32(fs), false);
+            this.gpr[rt] = v; this.gprHi[rt] = v >> 31;
+        }
+        else if (sub === 0x01) { // DMFC1: full 64-bit move of the FPR pair into gpr(lo)/gprHi(hi)
+            this.gpr[rt] = this.fprView.getInt32(fs * 8 + 4, false);
+            this.gprHi[rt] = this.fprView.getInt32(fs * 8, false);
+        }
+        else if (sub === 0x04) this.fprView.setUint32(this.getFprAddr32(fs), Number(this.gpr[rt] >>> 0), false);
+        else if (sub === 0x05) { // DMTC1: sign-extend 32-bit GPR to 64 bits in FPR
+            const val32 = this.gpr[rt] | 0;
+            this.fprView.setInt32(fs * 8, val32 >> 31, false);     // high word = sign
+            this.fprView.setInt32(fs * 8 + 4, val32, false);       // low word = value
+        }
+        else if (sub === 0x02) this.gpr[rt] = (fs === 0 ? this.fcr0 : this.fcr31) | 0;
+        else if (sub === 0x06) { if (fs === 31) this.fcr31 = Number(this.gpr[rt] >>> 0); }
+        else if (sub >= 0x10) {
+            const fmt = sub & 7;
+            if (fmt === 0) { // S
+                // FR=0 mode: odd single-precision FPRs live in the UPPER half of
+                // the even pair, so operand/result addresses must go through
+                // getFprAddr32 (not a hard-coded fs*8+4). Using the fixed offset
+                // silently read/wrote the wrong register for any odd FPR, which
+                // corrupted goddard's float matrix math (wrong camera -> menu W-sign).
+                const aS = this.getFprAddr32(fs), bS = this.getFprAddr32(rt), dS = this.getFprAddr32(fd);
+                const v1 = this.fprView.getFloat32(aS, false), v2 = this.fprView.getFloat32(bS, false);
+                if (f === 0x00) this.fprView.setFloat32(dS, v1 + v2, false);
+                else if (f === 0x01) this.fprView.setFloat32(dS, v1 - v2, false);
+                else if (f === 0x02) this.fprView.setFloat32(dS, v1 * v2, false);
+                else if (f === 0x03) this.fprView.setFloat32(dS, v1 / v2, false);
+                else if (f === 0x04) this.fprView.setFloat32(dS, Math.sqrt(v1), false);
+                else if (f === 0x05) this.fprView.setFloat32(dS, Math.abs(v1), false);
+                else if (f === 0x06) this.fprView.setFloat32(dS, v1, false);
+                else if (f === 0x07) this.fprView.setFloat32(dS, -v1, false);
+                else if (f === 0x0C) this.fprView.setInt32(dS, Math.round(v1), false);
+                else if (f === 0x0D) this.fprView.setInt32(dS, Math.trunc(v1), false);
+                else if (f === 0x0E) this.fprView.setInt32(dS, Math.ceil(v1), false);
+                else if (f === 0x0F) this.fprView.setInt32(dS, Math.floor(v1), false);
+                else if (f === 0x21) this.fprView.setFloat64(fd * 8, v1, false);
+                else if (f === 0x24) this.fprView.setInt32(dS, Math.trunc(v1), false);
+                else if (f === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false);
+                else if ((f & 0x30) === 0x30) {
+                    let cnd = false, n = isNaN(v1) || isNaN(v2);
+                    switch (f & 0xF) {
+                        case 0: cnd = false; break; case 1: cnd = n; break; case 2: cnd = !n && v1 === v2; break; case 3: cnd = n || v1 === v2; break;
+                        case 4: cnd = !n && v1 < v2; break; case 5: cnd = n || v1 < v2; break; case 6: cnd = !n && v1 <= v2; break; case 7: cnd = n || v1 <= v2; break;
+                        case 12: cnd = !n && v1 < v2; break; case 13: cnd = n || v1 < v2; break; case 14: cnd = !n && v1 <= v2; break; case 15: cnd = n || v1 <= v2; break;
+                    }
+                    if (cnd) this.fcr31 |= 0x00800000; else this.fcr31 &= ~0x00800000;
+                }
+            }
+            else if (fmt === 1) { // D
+                const v1 = this.fprView.getFloat64(fs * 8, false), v2 = this.fprView.getFloat64(rt * 8, false);
+                if (f === 0x00) this.fprView.setFloat64(fd * 8, v1 + v2, false);
+                else if (f === 0x01) this.fprView.setFloat64(fd * 8, v1 - v2, false);
+                else if (f === 0x02) this.fprView.setFloat64(fd * 8, v1 * v2, false);
+                else if (f === 0x03) this.fprView.setFloat64(fd * 8, v1 / v2, false);
+                else if (f === 0x04) this.fprView.setFloat64(fd * 8, Math.sqrt(v1), false);
+                else if (f === 0x05) this.fprView.setFloat64(fd * 8, Math.abs(v1), false);
+                else if (f === 0x06) this.fprView.setFloat64(fd * 8, v1, false);
+                else if (f === 0x07) this.fprView.setFloat64(fd * 8, -v1, false);
+                else if (f === 0x0C) this.fprView.setInt32(this.getFprAddr32(fd), Math.round(v1), false);
+                else if (f === 0x0D) this.fprView.setInt32(this.getFprAddr32(fd), Math.trunc(v1), false);
+                else if (f === 0x0E) this.fprView.setInt32(this.getFprAddr32(fd), Math.ceil(v1), false);
+                else if (f === 0x0F) this.fprView.setInt32(this.getFprAddr32(fd), Math.floor(v1), false);
+                else if (f === 0x20) this.fprView.setFloat32(this.getFprAddr32(fd), v1, false);
+                else if (f === 0x24) this.fprView.setInt32(this.getFprAddr32(fd), Math.trunc(v1), false);
+                else if (f === 0x25) this.fprView.setBigInt64(fd * 8, BigInt(Math.trunc(v1)), false);
+                else if ((f & 0x30) === 0x30) {
+                    let cnd = false, n = isNaN(v1) || isNaN(v2);
+                    switch (f & 0xF) {
+                        case 0: cnd = false; break; case 1: cnd = n; break; case 2: cnd = !n && v1 === v2; break; case 3: cnd = n || v1 === v2; break;
+                        case 4: cnd = !n && v1 < v2; break; case 5: cnd = n || v1 < v2; break; case 6: cnd = !n && v1 <= v2; break; case 7: cnd = n || v1 <= v2; break;
+                        case 12: cnd = !n && v1 < v2; break; case 13: cnd = n || v1 < v2; break; case 14: cnd = !n && v1 <= v2; break; case 15: cnd = n || v1 <= v2; break;
+                    }
+                    if (cnd) this.fcr31 |= 0x00800000; else this.fcr31 &= ~0x00800000;
+                }
+            }
+            else if (fmt === 4) { // W
+                const v = this.fprView.getInt32(this.getFprAddr32(fs), false);
+                if (f === 0x20) this.fprView.setFloat32(this.getFprAddr32(fd), v, false);
+                else if (f === 0x21) this.fprView.setFloat64(fd * 8, v, false);
+            }
+            else if (fmt === 5) { // L
+                const v = this.fprView.getBigInt64(fs * 8, false);
+                if (f === 0x20) this.fprView.setFloat32(this.getFprAddr32(fd), Number(v), false);
+                else if (f === 0x21) this.fprView.setFloat64(fd * 8, Number(v), false);
+            }
+        }
+        return (pc + 4) | 0;
+    }
+
+    opCOP0(i, pc, ds) {
+        const sub = (i >> 21) & 0x1F, rt = (i >> 16) & 0x1F, rd = (i >> 11) & 0x1F;
+        if (sub === 0x00) { this.gpr[rt] = this.cp0Registers[rd] | 0; this.gprHi[rt] = this.gpr[rt] >> 31; }
+        else if (sub === 0x01) { this.gpr[rt] = this.cp0Registers[rd] | 0; this.gprHi[rt] = this.gpr[rt] >> 31; }
+        else if (sub === 0x04) {
+            this.cp0Registers[rd] = this.gpr[rt] | 0;
+            if (rd === 11) { this.cp0Registers[13] &= ~0x00008000; if ((this.cp0Registers[11] | 0) !== this._lastFiredCompare) this._compareArmed = true; }
+        }
+        else if (sub === 0x05) {
+            this.cp0Registers[rd] = this.gpr[rt] | 0;
+            if (rd === 11) { this.cp0Registers[13] &= ~0x00008000; if ((this.cp0Registers[11] | 0) !== this._lastFiredCompare) this._compareArmed = true; }
+        }
+        else if (sub >= 0x10) { // CO=1: TLB ops / ERET
+            const fn = i & 0x3F;
+            if (fn === 0x18) { // ERET
+                if (this.cp0Registers[12] & 4) {
+                    this.pc = this.cp0Registers[30] | 0;
+                    this.cp0Registers[12] &= ~4;
+                } else {
+                    this.pc = this.cp0Registers[14] | 0;
+                    this.cp0Registers[12] &= ~2;
+                }
+                return null;
+            } else if (fn === 0x02 || fn === 0x06) { // TLBWI / TLBWR
+                const idx = (fn === 0x02 ? this.cp0Registers[0] : this.cp0Registers[1]) & 0x3F;
+                if (idx < 32) {
+                    const e = this.tlbEntries[idx];
+                    e.pageMask = this.cp0Registers[5] | 0;
+                    e.entryHi  = this.cp0Registers[10] | 0;
+                    e.entryLo0 = this.cp0Registers[2] | 0;
+                    e.entryLo1 = this.cp0Registers[3] | 0;
+                }
+            } else if (fn === 0x01) { // TLBR: read indexed entry into cp0 regs
+                const idx = this.cp0Registers[0] & 0x3F;
+                if (idx < 32) {
+                    const e = this.tlbEntries[idx];
+                    this.cp0Registers[5] = e.pageMask | 0;
+                    this.cp0Registers[10] = e.entryHi | 0;
+                    this.cp0Registers[2] = e.entryLo0 | 0;
+                    this.cp0Registers[3] = e.entryLo1 | 0;
+                }
+            } else if (fn === 0x08) { // TLBP: probe — set Index to matching entry or 0x80000000
+                const hi = this.cp0Registers[10] >>> 0;
+                let found = -1;
+                for (let k = 0; k < 32; k++) {
+                    const e = this.tlbEntries[k];
+                    const mask = ((e.pageMask & 0x01FFE000) | 0x1FFF) >>> 0;
+                    const vpnMask = (~mask) >>> 0;
+                    if (((hi & vpnMask) >>> 0) === ((e.entryHi & vpnMask) >>> 0)) { found = k; break; }
+                }
+                this.cp0Registers[0] = found >= 0 ? found : (0x80000000 | 0);
+            }
+            return (pc + 4) | 0;
+        }
+        return (pc + 4) | 0;
+    }
+
+    raiseException(code, pc, ds) {
+        if (code === 0 && this.debug) console.log(`Interrupt at PC=0x${pc.toString(16)}`);
+        if (code !== 0 && code !== 9) {
+            let instr = 0;
+            try { instr = this.mmu.read32(pc & ~3); } catch(e) {}
+            console.warn(`Exception ${code} at PC=0x${pc.toString(16)} DS=${ds} Instr=0x${instr.toString(16)} Status=0x${(this.cp0Registers[12] >>> 0).toString(16)} Cause=0x${(this.cp0Registers[13] >>> 0).toString(16)}`);
+            if (code === 13) {
+                console.warn(`Trap Registers: v0=0x${(this.gpr[2]>>>0).toString(16)} a0=0x${(this.gpr[4]>>>0).toString(16)} a1=0x${(this.gpr[5]>>>0).toString(16)} ra=0x${(this.gpr[31]>>>0).toString(16)}`);
+            }
+            console.warn("PC History:", Array.from(this.pcHistory).map(x => (x>>>0).toString(16)).join(", "));
+        }
+        const status = this.cp0Registers[12], bev = (status >>> 22) & 1;
+        const vector = bev ? (0xBFC00380 | 0) : (0x80000180 | 0);
+        this.cp0Registers[13] = (this.cp0Registers[13] & ~0x7C) | ((code << 2) | 0);
+
+        if (!(status & 2)) {
+            if (ds) {
+                this.cp0Registers[13] = this.cp0Registers[13] | 0x80000000; // set BD bit
+                this.cp0Registers[14] = (pc - 4) | 0;
+            } else {
+                this.cp0Registers[13] &= ~0x80000000; // clear BD bit (= & 0x7FFFFFFF)
+                this.cp0Registers[14] = pc | 0;
+            }
+            this.cp0Registers[12] |= 2;
+        }
+
+        // N64 OS BREAK-based syscall fast path.
+        // When __osRunningThread (0x80302f00) is null the general exception handler
+        // cannot advance EPC, causing an infinite BREAK loop during osInitialize.
+        // We handle N64 libultra BREAK syscalls directly so EPC is advanced to pc+4.
+        if (code === 9 && !ds) {
+            try {
+                const rdramView = new DataView(this.mmu.memory.rdram);
+                const runningThread = rdramView.getUint32(0x00302f00, false) >>> 0;
+                if (runningThread === 0) {
+                    const physPc = pc & 0x1FFFFFFF;
+                    const breakInstr = rdramView.getUint32(physPc, false) >>> 0;
+                    // N64 libultra: syscall type in bits[25:16] of the BREAK instruction
+                    const breakUpper = (breakInstr >>> 16) & 0x3FF;
+                    if (breakUpper === 7) {
+                        // __osSetSR: set CP0 Status to $a0, return new value in $v0
+                        this.cp0Registers[12] = this.gpr[4] | 0;
+                        this.gpr[2] = this.gpr[4];
+                        this.cp0Registers[14] = (pc + 4) | 0;
+                        this.pc = (pc + 4) | 0;
+                        this.exceptionRaised = true;
+                        this.branchTaken = false;
+                        return null;
+                    } else if (breakUpper === 6) {
+                        // __osGetSR: return current CP0 Status in $v0
+                        this.gpr[2] = this.cp0Registers[12] | 0;
+                        this.cp0Registers[14] = (pc + 4) | 0;
+                        this.pc = (pc + 4) | 0;
+                        this.exceptionRaised = true;
+                        this.branchTaken = false;
+                        return null;
+                    }
+                }
+            } catch(e) {}
+        }
+
+        this.pc = vector;
+        this.exceptionRaised = true;
+        this.branchTaken = false;
+        return null;
+    }
+
+    decompressMIO0(input, offset) {
+        const view = new DataView(input, offset);
+        if (view.getUint32(0, false) !== 0x4D494F30) return null;
+
+        const destSize = view.getUint32(4, false);
+        const compOffset = view.getUint32(8, false);
+        const uncompOffset = view.getUint32(12, false);
+        const output = new Uint8Array(destSize);
+
+        let outIdx = 0, bitIdx = 0, compIdx = compOffset, uncompIdx = uncompOffset, ctrlIdx = 16;
+        while (outIdx < destSize) {
+            const bit = (view.getUint8(ctrlIdx + (bitIdx >> 3)) >> (7 - (bitIdx & 7))) & 1;
+            bitIdx++;
+            if (bit) {
+                output[outIdx++] = view.getUint8(uncompIdx++);
+            } else {
+                const pair = view.getUint16(compIdx, false);
+                compIdx += 2;
+                const len = (pair >> 12) + 3;
+                const dist = (pair & 0xFFF) + 1;
+                let lOff = outIdx - dist;
+                for (let i = 0; i < len && outIdx < destSize; i++) {
+                    output[outIdx++] = (lOff >= 0) ? output[lOff++] : 0;
+                }
+            }
+            if (bitIdx === 8 * (compOffset - 16)) break;
+        }
+        return output;
+    }
+}

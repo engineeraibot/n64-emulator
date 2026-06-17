@@ -1,0 +1,14 @@
+const {buildMachine}=require('./tmp_boot');
+const {loadState}=require('./tmp_state');
+const {ram,mmu,rcp,cpu}=buildMachine();
+loadState(process.env.STATE||'state_playable', ram, mmu, cpu, rcp);
+let emits=0, frames=0, firstC=0, lastC=0;
+const origEmit=mmu.emitAudioBuffer.bind(mmu);
+mmu.emitAudioBuffer=(addr,len)=>{emits++;frames+=len>>2;if(!firstC)firstC=cpu.instructionCount;lastC=cpu.instructionCount;return origEmit(addr,len);};
+const N=parseInt(process.env.N||'8000000',10);
+for(let s=0;s<N;s++) cpu.step();
+const dac=mmu.aiRegisters[4]>>>0;
+const rate=dac>0?Math.round(48681812/(dac+1)):0;
+const cPerEmit=(lastC-firstC)/(emits-1);
+console.log('emits',emits,'frames/emit',(frames/emits).toFixed(1),'AI_DACRATE reg4 =',dac,'->',rate,'Hz');
+console.log('counts/emit',cPerEmit.toFixed(0),'=> counts per emulated second =',(cPerEmit*rate/(frames/emits)/1e6).toFixed(1)+'M');

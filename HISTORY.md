@@ -2097,27 +2097,152 @@ boundaries (check f3dTaskCount every step) — stopping mid-frame tears GL targe
 (5.6×), in-game 2.0 → **10.9 fps** CPU-side. ~385k steps/frame ⇒ PAL 25fps needs ~9.6M
 steps/s ⇒ next lever = CPU block-JIT (interpreter now ~95% of wall time).
 
-**Browser.** script.js: GL renderer default on #screen canvas (?gl=0 = SW 2D path); GL mode
-presents at rAF via VI origin (RDRAM framebuffer is NOT written in GL mode — the whole blit/
-snapshot machinery is SW-only). cpu.js run(): setTimeout(0)→MessageChannel (nested setTimeout
-clamps to 4ms). Keyboard: arrows=stick, X=A, C=B, Z=Z, Enter=START, A/S=L/R, IJKL=C, TFGH=dpad.
-index.html loads gl-renderer.js. Files: gl-renderer.js, tmp_glsim.js, tmp_glrender.js,
-tmp_glbench.js; backups cpu_pre_t40_backup.js, rcp_pre_t40_backup.js.
+**Browser.** script.js: GL renderer default on #screen canvas (?gl=0 = SW 2D path); GL 
+## Task #43 — G_MTX MUL order + Fast3D push-bit fix: castle paintings (and title Mario head!) restored
 
-**Regression.** 44/44 tests; title md5 79b3d46383efdda6bcf2b9cb9ab3862f intact (SW path
-byte-exact, taps are pure no-ops when glr unset); advfix1 76160 / select_file 73541 intact.
+**Symptom (user report):** inside the castle, paintings render as solid black holes (BoB room:
+big black square above the checkered platform). Reproduced in-sandbox at `state_bobpaint`.
 
+**Wrong leads eliminated:** texture decode was fine (`tmp_texaudit.js` dumped both 64x32 RGBA16
+painting halves pixel-perfect); the suspicious IA8 n=8 triangle group in `tmp_triaudit.js` was
+just Mario's shadow. `tmp_paintprobe.js` showed the painting quads WERE drawn — at screen
+x -217..-128, i.e. fully off-screen left. The black square is simply the hole the room model
+leaves for the painting, with nothing drawn in it.
 
-### Task #40 addendum — browser black-screen fix (2026-06-11)
-User report: black screen in the browser. Root cause: in GL mode `screenCtx` is null and
-`resize()` called `screenCtx.imageSmoothingEnabled` unconditionally -> TypeError during
-DOMContentLoaded -> the animate/present loop never started (game itself was running).
-FakeGL/node could not see this (browser-only code path). Fixes: null-guard in resize();
-GL init/present failures now self-heal by reloading with ?gl=0; status overlay (top right,
-click to hide) shows renderer | steps/s | booting/fps so a black boot phase is diagnosable.
-New tool `tmp_domsmoke.js`: runs index.html's REAL load path (scripts concatenated into one
-eval scope, DOMContentLoaded, ROM fetch, cpu.run, rAF/animate) under jsdom (install path
-/tmp/gltest) with FakeGL answering getContext('webgl') — caught the bug class; both ?gl=1
-and ?gl=0 paths verified error-free. Shaders additionally validated with real glslang
-(glslang-validator-prebuilt-predownloaded npm package — plain `npm i gl`/playwright browser
-downloads are BLOCKED in this sandbox, but npm-registry tarballs work).
+**Root cause (tmp_mtxprobe.js):** paintings are positioned by the game's only heavy
+G_MTX **MUL** chain (`translate(PUSH) · rotX · rotY · scale`, then POPMTX — see decomp
+painting.c). Two bugs in `handleG_MTX`:
+1. **MUL order**: code did `top' = top·m`; correct row-vector semantics are `top' = m·top`
+   (incoming matrix applies to the vertex FIRST). Observed smoking gun: a pure-rotation MUL
+   (rotY 90°) rotated the accumulated translation (t=(-2922,-47,3194) → (3194,-47,2922)).
+   Same fix applied to projection MUL.
+2. **Fast3D push bit**: old code assumed gbi XORs G_MTX_PUSH like F3DEX2; old Fast3D gbi has
+   NO XOR, so command bit2 SET = PUSH directly. The inverted decode pushed on every LOAD
+   (modelview stack leaked to depth 60+ per frame) and never pushed the painting's translate.
+   After fix: max stack depth 2 (`tmp_stackdepth.js`). F3DEX2 path left unchanged.
+
+Masked everywhere else because SM64's geo engine precomputes matrices CPU-side and uses
+G_MTX **LOAD** for normal geometry.
+
+**Windfall:** the goddard Mario head on the title/START screen had been lost to the same bug
+(rendered off-screen) — the START screen now shows the winking Mario head over the wallpaper,
+and the title logo renders at its true scale. The old title baseline ("zoomed-in MARIO
+letters", md5 79b3d46…, nonBlack 75541) was the BUG; CLAUDE.md's old claim that "the real
+intro starts zoomed" was a rationalization. New title baseline at f3d 96: full SUPER MARIO 64
+logo, origin 0x3da800, nonBlack 40441, md5 e958048bf66889f4dbec9d0e22ce6713.
+
+**New baselines (SW unless noted):** wallpaper `state_advfix1` STOPF3D=20 nonBlack=74284,
+`state_title_full` STOPF3D=20 nonBlack=74033 (both now include the Mario head);
+select_file 73541; playable 76099; BoB painting room `state_bobpaint` STOPF3D=3 — Bob-omb
+painting visible in gold frame (GL nonBlack 74867; GL title_full@18 74193). 44/44 tests,
+domsmoke GL=0/1 clean.
+
+**New tooling (KEEP):** `tmp_walkto.js` (feedback-steered walk to TX/TZ using gMarioState pos),
+`tmp_pushdoor.js` (walk + stall-detect + A-press door opener), `tmp_teleport.js`
+(X/Y/Z/YAW pokes gMarioState->pos/vel + gMarioObject gfx.pos/oPos — bypasses sticky collision
+navigation entirely), `tmp_floorprobe.js` (grid floor-height probe — beware mid-fall samples),
+`tmp_nav2.js` (tmp_navigate + position telemetry), `tmp_paintprobe.js`/`tmp_mtxprobe.js`
+(DL draw/tile/matrix tracers), `tmp_objscan.js`/`tmp_objlist3.js` (object pool dump).
+**Key RAM addresses (EU):** gMarioState->pos = 0x8030946c (faceAngle yaw 0x80309456,
+vel 0x80309478); gMarioObject = 0x80313f38 (gfx.pos +0x20, gfx.angle yaw +0x1C, oPos +0xA0);
+object pool stride 0x260, activeFlags +0x74, behavior +0x20C.
+**Castle geography (decomp ground truth):** painting rooms are DETACHED geometry far from the
+lobby, connected by warp doors — bob painting (-5222.4, 409.6, -153.6) yaw 90°; ccm
+(-2611.2, -307.2, -4352); wf (-51.2, -204.8, -4505.6); jrb (4300.8, 409.6, -537.6) yaw 270°.
+Lobby: entrance double door x=-946/-1100 z=2202; sun mosaic ≈ (-1024, -50, 900); ground star
+doors z=-1074 (x 256 / -2303); brick stairwell doors z=-824 (x -271 / -1775); front-corner
+stair landings y=205. `state_bobpaint` was captured by teleporting to (-5000, 600, -154)
+YAW=49152 from `state_nvD` (in-lobby walk state).
+
+Backup: `rcp_pre_t43_backup.js`.
+
+## Task #44 — Vertex fog (G_MW_FOG + G_FOG shade alpha): course terrain was solid grey
+
+**Symptom (user report):** entering Bob-omb Battlefield, all level terrain rendered flat light
+grey (objects/Mario/HUD fine). Reproduced end-to-end in-sandbox: state_bobpaint → teleport
+BEHIND the painting plane (X=-5300 Y=430 Z=-154 — walking/jumping into it kept getting
+wall-ejected; behind-the-plane teleport triggers the warp cleanly) → painting zoom →
+star select ("BIG BOB-OMB ON THE SUMMIT", A presses) → in-level. `state_boblevel` = Mario at
+BoB spawn with the intro dialog up, exact match of the user's screenshot.
+
+**Diagnosis (tmp_triaudit.js):** the two biggest triangle groups (n=570/473 = terrain) had
+otherModeHi 2-CYCLE + otherModeLo 0xC8112078 (G_RM_FOG_SHADE_A | G_RM_AA_ZB_OPA_SURF2) +
+geometryMode bit 0x10000 (G_FOG) — textures sampled FINE (grass green). In
+G_RM_FOG_SHADE_A, cycle-0 blends P=FOG_COLOR against the pixel with A=SHADE ALPHA, which the
+RSP is supposed to fill per-vertex from the G_MW_FOG multiplier/offset. handleG_MOVEWORD
+silently dropped index 0x08 and handleG_VTX never computed fog → shade alpha stayed 255 →
+out = 100% fog colour (BoB's fog grey) on every fogged pixel.
+
+**Fix (rcp.js):** store `fogMul`/`fogOff` from G_MOVEWORD index 0x08 (lo = fm<<16 | fo, both
+s16; gsSPFogPosition: fm=128000/(max-min), fo=(500-min)*256/(max-min)); in handleG_VTX, when
+geometryMode & G_FOG, replace vertex/shade alpha with clamp(ndcZ*fm + fo, 0, 255) where
+ndcZ = clip z/w (+1 = far). GL renderer needed NO change — its fog modes already read the
+shade-alpha varying, and it gets vertices post-vertex-pipeline via the drawTriangle tap.
+
+**Verified:** BoB terrain correct SW+GL (grass/path/boulders/cliffs); 44/44; title md5
+e958048b… IDENTICAL (no fog there); wallpaper 74284, select 73541, playable 76099 all
+unchanged (castle grounds doesn't set G_FOG); bobpaint GL 74867 unchanged (SW 74625);
+domsmoke GL=0/1 clean. New checkpoint: `state_boblevel` (+ `state_warp5` = star-select
+screen). This closes the "2-cycle/fog on real in-game states" open item; remaining audio
+items (ADPCM order-2, ENVMIXER ramps) still open.
+
+## Task #45 — N64 3-point bilinear texture filtering (GL renderer)
+
+**User question:** "is it normal that some things look really pixelated?" Partly: 320x240 is
+authentic. But the harsh texture blockiness was ours — the RDP filters textures with its
+3-point bilinear filter (G_TF_BILERP, set by SM64 in otherModeHi bits 12-13) and both our
+renderers point-sampled everything.
+
+**Implemented (GL path only by user choice; SW stays point-sampled for speed):**
+- gl-renderer.js fragment shader: `fetchTexelI` (addressed integer tap) + 3-point `fetchTexel`:
+  base=floor(st), f=frac(st); upper-left triangle blends T00+fx(T10-T00)+fy(T01-T00), else
+  T11+(1-fx)(T01-T11)+(1-fy)(T10-T11). NO half-texel offset (RDP fracs the 10.5 ST directly —
+  GL LINEAR would be shifted half a texel and bleed across mask/mirror seams; every tap goes
+  through texAddr instead). New uniform `uBilerp` = (mode != COPY) && omHi bit13 (covers
+  BILERP=2 and AVERAGE=3; COPY mode never filters, matching hardware). omHi was already in the
+  batch key, so no batching change.
+- tmp_glsim.js: shader twin updated identically (fetchTexelI + 3-point fetchTexel).
+
+**Verified:** GL renders visibly smoothed, geometry/text intact: title_full@18 74189 (was
+74193), bobpaint 75198 (74867), boblevel 75569 (75541), select_file 73542 (73541) — tiny
+nonBlack drift = filtered edge pixels, all visually correct. SW renders byte-stable
+(boblevel 75500). 44/44 tests. domsmoke GL=0/1 clean (NB: had to `npm install jsdom` in
+/tmp/gltest again — /tmp is wiped between sandbox sessions; not a regression).
+Backup: `gl-renderer_pre_t45_backup.js`.
+
+---
+
+## Task #49 — MK64: LoadTile row-stride fix → clean menus → in-race gameplay rendering
+
+**Symptom.** After Task #48 MK64's title rendered but the mode-select menus showed colorful
+diagonal striping over black. Earlier notes called it "some menu-cell UI textures still striped."
+
+**Diagnosis.** Instrumented the menu frame (`tmp_mk64tex.js`/`tmp_mk64lb2.js`). The striped area
+was the **menu background**, drawn as ~80 stacked full-width horizontal strips. Each strip:
+G_TEXRECT of an RGBA16 tile, 321×3 texels, `line`=81 words, tmem=0, loaded via **G_LOADTILE**
+(uls=0 ult=k*8 lrs=1280 lrt=(k+1)*8 → 321 texels wide × 3 rows, imgW=320). No LoadBlock involved.
+
+`handleG_LOADTILE` wrote texels into TMEM with a single running pointer `d` (contiguous packing),
+so each loaded row started immediately after the previous one. But the sampler reads row `tt` at
+`tile.tmem*8 + tt*tile.line*8` (and GL `_decodeTile` the same). For these strips a row is 321
+RGBA16 texels = 642 bytes, while `line`=81 words = 648 bytes — a 6-byte (3-texel) gap per row.
+Contiguous packing therefore shifted every TMEM row 3 texels left of where the sampler looked →
+diagonal skew. SM64 was never hit because its LoadTile textures have `line` == exact row width
+(no padding), so contiguous == line-strided there.
+
+**Fix.** In `handleG_LOADTILE`, place each row on the line boundary:
+`lineBytes = tile.line*8; d = off + (y - y0)*lineBytes;` then fill texels left-to-right.
+Falls back to packed width when `line`==0. Flat TMEM preserved (no odd-line word swizzle),
+consistent with both samplers. Byte-identical wherever row bytes == line*8.
+
+**Result.** MK64 GAME SELECT menu renders cleanly (GAME SELECT header, 1P/2P/3P/4P GAME cells
+with character portraits, MARIO GP / T.TRIALS / VS / BATTLE / OPTION / DATA). Drove the
+front-end with A-press auto-advance (`tmp_mk64drive.js INSTATE=/ADV=/PERIOD=/OUTSTATE=`):
+GAME SELECT → class select (50/100/150cc) → **MAP SELECT with a working 3D track preview** →
+track load → **in-race 3D rendering** (Luigi Raceway: road with lane markings, barriers, grass
+in correct perspective). Upper-screen skybox/distant scenery still glitched — next frontier.
+New states: `state_mk64_d1..d4`, `state_mk64_race`. Backup `rcp_pre_loadtile_backup.js`.
+
+**Verified (no SM64 regression).** 44/44 test files; title md5 IDENTICAL
+e958048bf66889f4dbec9d0e22ce6713; SW select_file 73541, playable 76099, boblevel 75500,
+bobpaint 74625 (all unchanged); GL select_file 73542 (unchanged). `node --check` clean.
