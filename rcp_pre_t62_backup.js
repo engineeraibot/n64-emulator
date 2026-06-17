@@ -1640,29 +1640,20 @@ class RCP {
         const lights = this.rspState.lights;
         const numLights = this.rspState.numLights | 0;
         let ambR, ambG, ambB;
-        // Task #62: iterate the light array directly instead of allocating a
-        // per-vertex `lights.slice(0, numLights)` copy, and reuse a single
-        // hoisted default-light array instead of allocating one per call. Both
-        // are byte-identical (same ambient + light values, same iteration order,
-        // same math) and remove ~1.6k-3.5k short-lived allocations PER FRAME
-        // from the lit-vertex path (GC pressure on the shared SW/GL transform).
-        let arr, n;
+        let dirLights;
         if (lights && numLights > 0 && lights[numLights]) {
             const amb = lights[numLights];
             ambR = amb.r; ambG = amb.g; ambB = amb.b;
-            arr = lights; n = numLights;
+            dirLights = lights.slice(0, numLights);
         } else {
             // Default: warm ambient + one front-up key light. Matches what the
             // SM64 boot intro looks like before the game's own light setup
             // takes over.
             ambR = 64; ambG = 64; ambB = 64;
-            arr = this._defaultDirLights ||
-                (this._defaultDirLights = [{ r: 200, g: 200, b: 200, dx: 0.4, dy: 0.7, dz: 0.6 }]);
-            n = 1;
+            dirLights = [{ r: 200, g: 200, b: 200, dx: 0.4, dy: 0.7, dz: 0.6 }];
         }
         let R = ambR, G = ambG, B = ambB;
-        for (let j = 0; j < n; j++) {
-            const L = arr[j];
+        for (const L of dirLights) {
             const dot = nx * L.dx + ny * L.dy + nz * L.dz;
             const k = dot > 0 ? dot : 0;
             R += L.r * k;
